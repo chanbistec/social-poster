@@ -1,3 +1,12 @@
 node_modules/
 .env
 credentials/
+data/
+*.db
+*.sqlite
+*.sqlite3
+pm2*.log
+.next/
+node_modules/
+logs/
+
