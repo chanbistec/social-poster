@@ -12,13 +12,13 @@
   - Description: Convert sidebar to client component with usePathname() for active link highlighting. Tenant switcher persists to localStorage, provides context to child pages via URL params or context.
 
 ### Wave 2 (Feature additions — depends on Wave 1)
-- [ ] `T3` — Platform credential management UI
+- [x] `T3` — Platform credential management UI
   - Files: `src/app/tenants/[id]/page.tsx`, `src/components/platform-form.tsx`, `src/components/platform-card.tsx`
   - Depends: T1
   - Estimate: medium
   - Description: Add Platform button on tenant detail. Modal/form for adding credentials per platform type. Display existing platforms as cards with edit/delete. Mask secrets in display.
 
-- [ ] `T4` — Calendar grid view
+- [x] `T4` — Calendar grid view
   - Files: `src/app/calendar/page.tsx`, `src/components/calendar-view.tsx`
   - Depends: T1, T2
   - Estimate: medium

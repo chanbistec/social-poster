@@ -1,16 +1,9 @@
 import Link from "next/link";
 import db from "@/lib/db";
-import PlatformBadge from "@/components/platform-badge";
-
-function statusFromExpiry(expiry?: string | null) {
-  if (!expiry) return "valid" as const;
-  const exp = new Date(expiry).getTime();
-  const now = Date.now();
-  const days = (exp - now) / (1000 * 60 * 60 * 24);
-  if (days < 0) return "expired" as const;
-  if (days < 7) return "expiring" as const;
-  return "valid" as const;
-}
+import type { PlatformType } from "@/lib/types";
+import { decrypt } from "@/lib/crypto";
+import PlatformCard from "@/components/platform-card";
+import PlatformActions from "./platform-actions";
 
 export default async function TenantDetailPage({
   params,
@@ -31,9 +24,39 @@ export default async function TenantDetailPage({
     );
   }
 
-  const platforms = db
+  const rawPlatforms = db
     .prepare("SELECT * FROM platforms WHERE tenant_id = ? ORDER BY type")
     .all(id) as any[];
+
+  // Deserialize for client components (mask credentials server-side)
+  const platforms = rawPlatforms.map((p) => {
+    let creds: Record<string, unknown> = {};
+    try {
+      creds = JSON.parse(decrypt(p.credentials));
+      // Mask all values for display
+      for (const key of Object.keys(creds)) {
+        creds[key] = "••••••••";
+      }
+    } catch {
+      /* corrupted or empty */
+    }
+
+    let config: Record<string, unknown> | null = null;
+    try {
+      config = p.config ? JSON.parse(p.config) : null;
+    } catch {
+      /* invalid */
+    }
+
+    return {
+      id: p.id as number,
+      type: p.type as PlatformType,
+      credentials: creds,
+      config,
+      tokenExpiresAt: p.token_expires_at as string | null,
+      enabled: !!p.enabled,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -51,24 +74,33 @@ export default async function TenantDetailPage({
       </div>
 
       <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
-        <h3 className="mb-2 text-sm font-medium text-zinc-300">
-          Platform Connections
-        </h3>
-        <div className="grid gap-3 md:grid-cols-3">
-          {platforms.length === 0 && (
-            <div className="text-xs text-zinc-500">No platforms connected</div>
-          )}
-          {platforms.map((p) => (
-            <PlatformBadge
-              key={p.id}
-              platform={p.type}
-              status={statusFromExpiry(p.token_expires_at)}
-            />
-          ))}
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-medium text-zinc-300">
+            Platform Connections
+          </h3>
+          <PlatformActions tenantId={id} />
         </div>
-        <p className="mt-3 text-xs text-zinc-500">
-          Manage credentials via API for now (UI coming in Wave 3+).
-        </p>
+
+        {platforms.length === 0 ? (
+          <div className="rounded-md border border-dashed border-white/10 py-8 text-center text-sm text-zinc-500">
+            No platforms connected yet. Add one to get started.
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {platforms.map((p) => (
+              <PlatformCard
+                key={p.id}
+                id={p.id}
+                tenantId={id}
+                type={p.type}
+                credentials={p.credentials}
+                config={p.config}
+                tokenExpiresAt={p.tokenExpiresAt}
+                enabled={p.enabled}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
