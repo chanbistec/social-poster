@@ -114,3 +114,10 @@ Tenant (e.g., "area6", "bistec-academy")
 2. Should we support draft/approval workflow, or just direct publish?
 3. Media storage: local filesystem or Cloudflare R2?
 4. Auth for dashboard: simple password, or integrate with Discord/Google OAuth?
+
+## Decisions
+
+1. **Dashboard:** Next.js (full-featured, SSR, API routes built-in)
+2. **Workflow:** Draft → Approval → Scheduled → Published (approval flow)
+3. **Media storage:** Local filesystem
+4. **Auth:** Simple password auth (bcrypt + JWT)
