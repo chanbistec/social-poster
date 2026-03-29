@@ -36,7 +36,7 @@
   - Description: node-cron job running every minute. Queries due posts (status=scheduled, scheduled_at <= now). Publishes each via the publish orchestrator. Handles retries (max 3) with exponential backoff. Starts automatically with the Next.js server.
 
 ### Wave 3 (depends on Wave 2)
-- [~] `T7` — Dashboard layout + tenant pages
+- [x] `T7` — Dashboard layout + tenant pages
   - Files: `src/app/layout.tsx`, `src/app/dashboard/page.tsx`, `src/app/tenants/page.tsx`, `src/app/tenants/[id]/page.tsx`, `src/app/tenants/new/page.tsx`, `src/components/sidebar.tsx`, `src/components/tenant-switcher.tsx`, `src/components/platform-badge.tsx`
   - Depends: T4
   - Estimate: medium
