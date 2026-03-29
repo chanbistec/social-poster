@@ -1,14 +1,11 @@
 import Link from "next/link";
+import db from "@/lib/db";
 import PostCard from "@/components/post-card";
 
-async function getPosts() {
-  const res = await fetch("http://localhost:3000/api/posts", { cache: "no-store" });
-  const data = await res.json();
-  return data.data || [];
-}
-
 export default async function PostsPage() {
-  const posts = await getPosts();
+  const posts = db
+    .prepare("SELECT * FROM posts ORDER BY created_at DESC")
+    .all() as any[];
 
   return (
     <div className="space-y-6">

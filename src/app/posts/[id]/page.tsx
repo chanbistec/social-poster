@@ -1,7 +1,8 @@
 import db from "@/lib/db";
 
-export default async function PostDetailPage({ params }: { params: { id: string } }) {
-  const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(params.id) as any;
+export default async function PostDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const post = db.prepare("SELECT * FROM posts WHERE id = ?").get(id) as any;
   if (!post) return <div>Post not found</div>;
 
   const results = db.prepare("SELECT * FROM publish_results WHERE post_id = ?").all(post.id) as any[];

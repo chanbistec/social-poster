@@ -15,11 +15,13 @@ function statusFromExpiry(expiry?: string | null) {
 export default async function TenantDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
+
   const tenant = db
     .prepare("SELECT * FROM tenants WHERE id = ?")
-    .get(params.id) as any;
+    .get(id) as any;
 
   if (!tenant) {
     return (
@@ -31,7 +33,7 @@ export default async function TenantDetailPage({
 
   const platforms = db
     .prepare("SELECT * FROM platforms WHERE tenant_id = ? ORDER BY type")
-    .all(params.id) as any[];
+    .all(id) as any[];
 
   return (
     <div className="space-y-6">

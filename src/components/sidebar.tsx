@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -9,6 +12,8 @@ const nav = [
 ];
 
 export default function Sidebar({ className }: { className?: string }) {
+  const pathname = usePathname();
+
   return (
     <aside
       className={cn(
@@ -21,16 +26,24 @@ export default function Sidebar({ className }: { className?: string }) {
         <p className="text-xs text-zinc-400">Multi-tenant social media ops</p>
       </div>
 
-      <nav className="flex flex-col gap-2 text-sm">
-        {nav.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="rounded-md px-3 py-2 text-zinc-300 hover:bg-zinc-900 hover:text-white"
-          >
-            {item.label}
-          </Link>
-        ))}
+      <nav className="flex flex-col gap-1 text-sm">
+        {nav.map((item) => {
+          const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "rounded-md px-3 py-2 transition-colors",
+                isActive
+                  ? "border-l-2 border-orange-500 bg-zinc-800/80 text-white"
+                  : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
+              )}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
       </nav>
 
       <div className="mt-auto pt-6 text-xs text-zinc-500">

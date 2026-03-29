@@ -1,12 +1,12 @@
 ## Tasks
 
 ### Wave 1 (Critical fixes — no dependencies)
-- [ ] `T1` — Fix TypeScript params + production data fetching
+- [x] `T1` — Fix TypeScript params + production data fetching
   - Files: `src/app/tenants/[id]/page.tsx`, `src/app/posts/[id]/page.tsx`, `src/app/posts/page.tsx`, `src/app/calendar/page.tsx`, `src/app/dashboard/page.tsx`
   - Estimate: small
   - Description: Fix Next.js 15 async params pattern. Replace fetch("localhost") with direct db queries in server components. Fix dashboard to show real recent posts and pending approval count.
 
-- [ ] `T2` — Sidebar active state + tenant context
+- [x] `T2` — Sidebar active state + tenant context
   - Files: `src/components/sidebar.tsx`, `src/components/tenant-switcher.tsx`, `src/app/layout.tsx`
   - Estimate: small
   - Description: Convert sidebar to client component with usePathname() for active link highlighting. Tenant switcher persists to localStorage, provides context to child pages via URL params or context.
