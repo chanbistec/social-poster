@@ -1,0 +1,11 @@
+{
+  "name": "social-poster-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "social-poster": "index.ts"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}

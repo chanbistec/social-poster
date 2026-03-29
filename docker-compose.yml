@@ -1,0 +1,10 @@
+services:
+  social-poster:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SERVER_SECRET=change-me
+      - DATABASE_PATH=/app/data/social-poster.db

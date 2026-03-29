@@ -48,26 +48,26 @@
   - Estimate: medium
   - Description: Post list with status filters and tenant filter. Post composer: caption editor, media upload (drag-drop), platform selector (checkboxes), schedule date picker. Save as draft or submit for approval. Post detail shows publish results per platform with links.
 
-- [~] `T9` — Content calendar
+- [x] `T9` — Content calendar
   - Files: `src/app/calendar/page.tsx`, `src/components/calendar-view.tsx`
   - Depends: T5, T7
   - Estimate: small
   - Description: Monthly calendar view. Posts shown on their scheduled/published date. Color-coded by status. Click to navigate to post detail. Tenant-filtered.
 
 ### Wave 4 (depends on Wave 3)
-- [ ] `T10` — CLI tool
+- [~] `T10` — CLI tool
   - Files: `cli/index.ts`, `cli/package.json`
   - Depends: T4, T5
   - Estimate: medium
   - Description: Commander.js CLI. Commands: login, tenants (list/create/delete), platforms (add/list/remove), post (create/list/approve/reject/publish/schedule), status. Calls REST API. Stores config in ~/.social-poster/config.json. Supports --json output.
 
-- [ ] `T11` — MCP server
+- [~] `T11` — MCP server
   - Files: `mcp/server.ts`, `mcp/package.json`
   - Depends: T4, T5
   - Estimate: small
   - Description: MCP server with tools: create_post, list_posts, approve_post, schedule_post, publish_post, list_tenants, add_tenant, get_post_status. Uses @modelcontextprotocol/sdk with stdio transport. Calls REST API internally.
 
-- [ ] `T12` — Integration tests + deployment
+- [~] `T12` — Integration tests + deployment
   - Files: `tests/api.test.ts`, `tests/publish.test.ts`, `Dockerfile`, `docker-compose.yml`, `scripts/setup.sh`
   - Depends: T1-T11
   - Estimate: medium
