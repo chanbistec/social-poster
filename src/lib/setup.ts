@@ -1,4 +1,4 @@
-import { db } from "./db";
+import db from "./db";
 import { hashPassword } from "./auth";
 
 const DEFAULT_ADMIN_USERNAME = "admin";

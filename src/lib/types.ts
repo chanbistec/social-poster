@@ -30,7 +30,7 @@ export interface Platform {
   enabled: boolean;
 }
 
-export type PostStatus = 'draft' | 'scheduled' | 'approved' | 'publishing' | 'published' | 'failed';
+export type PostStatus = 'draft' | 'pending_approval' | 'scheduled' | 'approved' | 'publishing' | 'published' | 'failed';
 
 export interface Post {
   id: number;

@@ -20,6 +20,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow public media access (Instagram needs public URLs)
+  if (pathname.startsWith("/api/media/") && request.method === "GET") {
+    return NextResponse.next();
+  }
+
   // Allow public assets and Next.js internals
   if (
     pathname.startsWith("/_next") ||

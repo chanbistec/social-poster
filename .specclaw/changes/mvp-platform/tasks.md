@@ -17,19 +17,19 @@
   - Description: YouTube (googleapis resumable upload), Instagram (container API for photos + reels), Facebook (Graph API photo/video). Publisher registry that dispatches to correct publisher by platform type. Each returns {success, external_id, external_url, error}.
 
 ### Wave 2 (depends on Wave 1)
-- [ ] `T4` — Tenant + Platform API routes
+- [x] `T4` — Tenant + Platform API routes
   - Files: `src/app/api/tenants/route.ts`, `src/app/api/tenants/[id]/route.ts`, `src/app/api/platforms/route.ts`, `src/app/api/platforms/[id]/route.ts`
   - Depends: T1, T2
   - Estimate: small
   - Description: CRUD routes for tenants and platform connections. Credentials encrypted before storage. Token expiry tracking. All routes require JWT auth.
 
-- [ ] `T5` — Post API routes + publish orchestrator
+- [x] `T5` — Post API routes + publish orchestrator
   - Files: `src/app/api/posts/route.ts`, `src/app/api/posts/[id]/route.ts`, `src/app/api/posts/[id]/approve/route.ts`, `src/app/api/posts/[id]/reject/route.ts`, `src/app/api/posts/[id]/publish/route.ts`, `src/app/api/media/[id]/route.ts`, `src/lib/media.ts`
   - Depends: T1, T2, T3
   - Estimate: medium
   - Description: Post CRUD with status workflow (draft→pending→approved→scheduled→published). Media upload endpoint (multipart). Publish endpoint that dispatches to all selected platforms in parallel. Media serve route for Instagram container API. Track results per platform.
 
-- [ ] `T6` — Post scheduler
+- [x] `T6` — Post scheduler
   - Files: `src/lib/scheduler.ts`
   - Depends: T1, T5
   - Estimate: small
