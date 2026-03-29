@@ -42,7 +42,7 @@
   - Estimate: medium
   - Description: App shell with sidebar navigation + tenant switcher. Dashboard overview showing recent posts, pending approvals, platform health per tenant. Tenant list page, tenant detail with platform credential management (add/edit/remove YouTube/IG/FB connections).
 
-- [~] `T8` — Post composer + post list
+- [x] `T8` — Post composer + post list
   - Files: `src/app/posts/page.tsx`, `src/app/posts/new/page.tsx`, `src/app/posts/[id]/page.tsx`, `src/components/post-card.tsx`, `src/components/media-upload.tsx`
   - Depends: T5, T7
   - Estimate: medium
