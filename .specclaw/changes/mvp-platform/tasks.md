@@ -55,19 +55,19 @@
   - Description: Monthly calendar view. Posts shown on their scheduled/published date. Color-coded by status. Click to navigate to post detail. Tenant-filtered.
 
 ### Wave 4 (depends on Wave 3)
-- [~] `T10` — CLI tool
+- [x] `T10` — CLI tool
   - Files: `cli/index.ts`, `cli/package.json`
   - Depends: T4, T5
   - Estimate: medium
   - Description: Commander.js CLI. Commands: login, tenants (list/create/delete), platforms (add/list/remove), post (create/list/approve/reject/publish/schedule), status. Calls REST API. Stores config in ~/.social-poster/config.json. Supports --json output.
 
-- [~] `T11` — MCP server
+- [x] `T11` — MCP server
   - Files: `mcp/server.ts`, `mcp/package.json`
   - Depends: T4, T5
   - Estimate: small
   - Description: MCP server with tools: create_post, list_posts, approve_post, schedule_post, publish_post, list_tenants, add_tenant, get_post_status. Uses @modelcontextprotocol/sdk with stdio transport. Calls REST API internally.
 
-- [~] `T12` — Integration tests + deployment
+- [x] `T12` — Integration tests + deployment
   - Files: `tests/api.test.ts`, `tests/publish.test.ts`, `Dockerfile`, `docker-compose.yml`, `scripts/setup.sh`
   - Depends: T1-T11
   - Estimate: medium
