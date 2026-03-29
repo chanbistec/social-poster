@@ -1,15 +1,16 @@
 # 🦞 SpecClaw Dashboard
 
 **Project:** social-poster
-**Last Updated:** 2026-03-29 15:05 UTC
+**Last Updated:** 2026-03-29 15:08 UTC
 
 ## Active Changes
 
-_No active changes yet. Run `specclaw propose "<idea>"` to start._
+_No active changes._
 
 ## Pending Proposals
 
-_None._
+
+- 📋 **mvp-platform** — proposal ready, awaiting planning
 
 ## Recently Completed
 
