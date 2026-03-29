@@ -1,17 +1,17 @@
 ## Tasks
 
 ### Wave 1 (no dependencies — foundation)
-- [ ] `T1` — Project scaffolding + database
+- [~] `T1` — Project scaffolding + database
   - Files: `package.json`, `tsconfig.json`, `next.config.js`, `tailwind.config.ts`, `src/lib/db.ts`, `src/lib/types.ts`, `src/lib/crypto.ts`, `scripts/migrate.ts`
   - Estimate: medium
   - Description: Init Next.js 15 project with TypeScript, Tailwind, shadcn/ui. Set up SQLite with better-sqlite3. Create all tables (tenants, platforms, posts, publish_results, users). Auto-migrate on startup. AES-256-GCM encryption helper for credentials.
 
-- [ ] `T2` — Authentication system
+- [x] `T2` — Authentication system
   - Files: `src/lib/auth.ts`, `src/app/api/auth/login/route.ts`, `src/app/api/auth/me/route.ts`, `src/app/(auth)/login/page.tsx`, `src/middleware.ts`
   - Estimate: small
   - Description: bcrypt password hashing, JWT creation/verification, login API route, auth middleware protecting /api/* and /dashboard/*. Login page with username/password form. Auto-create admin user on first run if no users exist.
 
-- [ ] `T3` — Platform publishers
+- [~] `T3` — Platform publishers
   - Files: `src/lib/publishers/youtube.ts`, `src/lib/publishers/instagram.ts`, `src/lib/publishers/facebook.ts`, `src/lib/publishers/index.ts`
   - Estimate: medium
   - Description: YouTube (googleapis resumable upload), Instagram (container API for photos + reels), Facebook (Graph API photo/video). Publisher registry that dispatches to correct publisher by platform type. Each returns {success, external_id, external_url, error}.
