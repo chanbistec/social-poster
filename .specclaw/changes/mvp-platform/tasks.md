@@ -36,19 +36,19 @@
   - Description: node-cron job running every minute. Queries due posts (status=scheduled, scheduled_at <= now). Publishes each via the publish orchestrator. Handles retries (max 3) with exponential backoff. Starts automatically with the Next.js server.
 
 ### Wave 3 (depends on Wave 2)
-- [ ] `T7` — Dashboard layout + tenant pages
+- [~] `T7` — Dashboard layout + tenant pages
   - Files: `src/app/layout.tsx`, `src/app/dashboard/page.tsx`, `src/app/tenants/page.tsx`, `src/app/tenants/[id]/page.tsx`, `src/app/tenants/new/page.tsx`, `src/components/sidebar.tsx`, `src/components/tenant-switcher.tsx`, `src/components/platform-badge.tsx`
   - Depends: T4
   - Estimate: medium
   - Description: App shell with sidebar navigation + tenant switcher. Dashboard overview showing recent posts, pending approvals, platform health per tenant. Tenant list page, tenant detail with platform credential management (add/edit/remove YouTube/IG/FB connections).
 
-- [ ] `T8` — Post composer + post list
+- [~] `T8` — Post composer + post list
   - Files: `src/app/posts/page.tsx`, `src/app/posts/new/page.tsx`, `src/app/posts/[id]/page.tsx`, `src/components/post-card.tsx`, `src/components/media-upload.tsx`
   - Depends: T5, T7
   - Estimate: medium
   - Description: Post list with status filters and tenant filter. Post composer: caption editor, media upload (drag-drop), platform selector (checkboxes), schedule date picker. Save as draft or submit for approval. Post detail shows publish results per platform with links.
 
-- [ ] `T9` — Content calendar
+- [~] `T9` — Content calendar
   - Files: `src/app/calendar/page.tsx`, `src/components/calendar-view.tsx`
   - Depends: T5, T7
   - Estimate: small
