@@ -25,7 +25,7 @@
   - Description: Monthly calendar grid (7 columns, Mon-Sun). Posts shown as colored dots on dates. Navigation: prev/next month. Click date shows posts for that day. Scoped to selected tenant.
 
 ### Wave 3 (Polish)
-- [ ] `T5` — Rebuild + deploy
+- [x] `T5` — Rebuild + deploy
   - Files: `next.config.js`, `ecosystem.config.cjs`
   - Depends: T1, T2, T3, T4
   - Estimate: small
