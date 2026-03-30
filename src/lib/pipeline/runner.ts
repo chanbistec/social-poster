@@ -175,16 +175,61 @@ export async function executePipeline(
         });
         stepResults.scenes = scenes;
 
-        // c. Render video
+        // c. Render video — map branding/timing/audio to what video-render.py expects
+        const cwd = process.cwd();
+        const resolvePath = (p: unknown) => {
+          if (!p || typeof p !== 'string') return undefined;
+          if (p.startsWith('/')) return p;
+          return join(cwd, p);
+        };
+
+        // Extract timing from videoConfig structure
+        const vcObj = videoConfig as Record<string, unknown> ?? {};
+        const structure = (vcObj.structure ?? {}) as Record<string, unknown>;
+        const introStruct = (structure.intro ?? {}) as Record<string, unknown>;
+        const outroStruct = (structure.outro ?? {}) as Record<string, unknown>;
+        const scenesStruct = (structure.scenes ?? {}) as Record<string, unknown>;
+        const timingObj = (vcObj.timing ?? {}) as Record<string, unknown>;
+        const audioObj = (vcObj.audio ?? {}) as Record<string, unknown>;
+
+        // Resolve font path
+        const fontsObj = branding.fonts as Record<string, string> | undefined;
+        const fontPath = fontsObj?.heading ?? fontsObj?.body ?? (branding as Record<string, unknown>).font as string | undefined;
+
+        const videoBranding = {
+          logoPath: resolvePath(branding.logo_path),
+          logoSize: (branding as Record<string, unknown>).logo_size ?? 55,
+          watermarkText: ((branding.watermark as Record<string, unknown>)?.text as string) ?? 'qualitylife.lk',
+          fontPath: fontPath ?? undefined,
+          introFrame: resolvePath(branding.intro_frame),
+          outroFrame: resolvePath(branding.outro_frame),
+        };
+
+        const videoTiming = {
+          introDuration: (introStruct.duration as number) ?? 2.0,
+          outroDuration: (outroStruct.duration as number) ?? 3.0,
+          voiceDelay: (timingObj.voice_delay as number) ?? 2.0,
+          voiceBuffer: (timingObj.voice_buffer_after as number) ?? 0.5,
+          sceneDistribution: (scenesStruct.distribution as number[]) ?? [0.3, 0.4, 0.3],
+        };
+
+        const videoAudio = {
+          bgmPath: resolvePath(branding.bgm_path) ?? resolvePath(audioObj.bgm),
+          bgmVolume: (audioObj.bgm_volume as number) ?? 0.20,
+          voiceVolume: (audioObj.voice_volume as number) ?? 1.0,
+          bgmFadeIn: (audioObj.bgm_fade_in as number) ?? 1.5,
+          bgmFadeOut: (audioObj.bgm_fade_out as number) ?? 2.0,
+        };
+
+        const kenBurns = (scenesStruct.ken_burns_styles as string[]) ?? ['zoom_in', 'slow_pan', 'zoom_out'];
+
         const video = await renderVideo({
           scenes: scenes.imagePaths,
           narration: { wavPath: narration.wavPath, duration: narration.duration },
-          branding,
-          timing: (videoConfig as Record<string, unknown>) ?? {},
-          audio: {
-            bgmPath: branding.bgm_path ?? undefined,
-            ...(videoConfig?.duration ? { duration: videoConfig.duration } : {}),
-          },
+          branding: videoBranding,
+          timing: videoTiming,
+          audio: videoAudio,
+          kenBurns,
           outputDir,
         });
         stepResults.video = video;

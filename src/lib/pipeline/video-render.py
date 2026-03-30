@@ -212,7 +212,6 @@ def compose_final(
             "-c:v", "libx264",
             "-c:a", "aac",
             "-pix_fmt", "yuv420p",
-            "-shortest",
             "-t", f"{total_duration:.3f}",
             output_path,
         ]
