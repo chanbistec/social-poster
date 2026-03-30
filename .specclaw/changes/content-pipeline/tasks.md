@@ -61,9 +61,9 @@
   - Estimate: small
 
 ### Wave 4 — Seed + deploy
-- [ ] `T13` — Seed Area6 pipeline template from existing configs
+- [x] `T13` — Seed Area6 pipeline template from existing configs
   - Description: Migrate reel-config.json + social-post-config.json into a pipeline template for tenant area6. Copy branding assets.
   - Estimate: small
 
-- [ ] `T14` — Build + deploy + verify
+- [x] `T14` — Build + deploy + verify
   - Estimate: small
