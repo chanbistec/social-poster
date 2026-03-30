@@ -67,6 +67,7 @@ export const config = {
     "/dashboard/:path*",
     "/tenants/:path*",
     "/posts/:path*",
+    "/pipelines/:path*",
     "/calendar/:path*",
     "/api/:path*",
   ],

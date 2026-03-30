@@ -1,9 +1,10 @@
 import Link from "next/link";
 import db from "@/lib/db";
-import type { PlatformType } from "@/lib/types";
+import type { PlatformType, TenantBranding } from "@/lib/types";
 import { decrypt } from "@/lib/crypto";
 import PlatformCard from "@/components/platform-card";
 import PlatformActions from "./platform-actions";
+import BrandingSection from "./branding-section";
 
 export default async function TenantDetailPage({
   params,
@@ -58,6 +59,20 @@ export default async function TenantDetailPage({
     };
   });
 
+  // Fetch branding
+  const brandingRow = db
+    .prepare("SELECT * FROM tenant_branding WHERE tenant_id = ?")
+    .get(id) as TenantBranding | undefined;
+
+  const branding = brandingRow
+    ? {
+        ...brandingRow,
+        colors: JSON.parse(brandingRow.colors || "{}"),
+        fonts: JSON.parse(brandingRow.fonts || "{}"),
+        backgrounds: JSON.parse(brandingRow.backgrounds || "{}"),
+      }
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -102,6 +117,9 @@ export default async function TenantDetailPage({
           </div>
         )}
       </div>
+
+      {/* Branding */}
+      <BrandingSection tenantId={id} initialBranding={branding} />
     </div>
   );
 }
