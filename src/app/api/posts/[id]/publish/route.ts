@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import { getAuth } from '@/lib/route-auth';
-import { decrypt } from '@/lib/crypto';
+import { decrypt, encrypt } from '@/lib/crypto';
+import { ensureFreshToken } from '@/lib/token-refresh';
 import { publishPost, type PlatformConfig } from '@/lib/publishers/index';
 import type { Post, PostParsed, Platform, PlatformType } from '@/lib/types';
 
@@ -51,13 +52,28 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
+  // Refresh tokens if needed
+  for (const p of platformRows) {
+    try {
+      await ensureFreshToken(p, decrypt, encrypt);
+    } catch (err) {
+      console.error(`[Publish] Token refresh failed for ${p.type}:`, err);
+      // Continue anyway — publish will fail with auth error if token is truly expired
+    }
+  }
+
+  // Re-load platforms after potential refresh
+  const freshPlatforms = db.prepare(
+    `SELECT * FROM platforms WHERE tenant_id = ? AND type IN (${placeholders}) AND enabled = 1`
+  ).all(post.tenant_id, ...platforms) as Platform[];
+
   // Build media base URL for Instagram
   const host = request.headers.get('host') ?? 'localhost:3000';
   const proto = request.headers.get('x-forwarded-proto') ?? 'http';
   const mediaBaseUrl = `${proto}://${host}/api/media`;
 
   // Decrypt credentials and build platform configs
-  const platformConfigs: PlatformConfig[] = platformRows.map((p) => {
+  const platformConfigs: PlatformConfig[] = freshPlatforms.map((p) => {
     const credentials = JSON.parse(decrypt(p.credentials)) as PlatformConfig['credentials'];
     const config = p.config ? JSON.parse(p.config) : {};
     return {

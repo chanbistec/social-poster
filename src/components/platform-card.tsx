@@ -106,6 +106,19 @@ export default function PlatformCard({
           </div>
           <div className="flex items-center gap-1">
             <button
+              onClick={async () => {
+                try {
+                  const res = await fetch(`/api/platforms/${id}/refresh`, { method: 'POST' });
+                  const data = await res.json();
+                  if (!res.ok) alert(data.error || 'Refresh failed');
+                  else { alert(data.data.message); router.refresh(); }
+                } catch { alert('Refresh failed'); }
+              }}
+              className="rounded-md px-2.5 py-1 text-xs text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-colors"
+            >
+              🔄 Refresh
+            </button>
+            <button
               onClick={() => setEditing(true)}
               className="rounded-md px-2.5 py-1 text-xs text-zinc-400 hover:bg-zinc-700 hover:text-white transition-colors"
             >

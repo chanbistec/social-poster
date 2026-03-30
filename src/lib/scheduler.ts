@@ -28,6 +28,9 @@ export class PostScheduler {
       this.processDuePosts().catch((err) => {
         console.error('[Scheduler] Unhandled error in processDuePosts:', err);
       });
+      refreshExpiringTokens().catch((err) => {
+        console.error('[Scheduler] Token refresh error:', err);
+      });
     });
 
     this._running = true;
@@ -310,3 +313,36 @@ function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
 // Export singleton — auto-starts
 export const scheduler = new PostScheduler();
 scheduler.start();
+
+// ---------------------------------------------------------------------------
+// Token refresh (runs every 30 minutes)
+// ---------------------------------------------------------------------------
+
+let lastTokenRefresh = 0;
+const TOKEN_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
+
+async function refreshExpiringTokens(): Promise<void> {
+  const now = Date.now();
+  if (now - lastTokenRefresh < TOKEN_REFRESH_INTERVAL) return;
+  lastTokenRefresh = now;
+
+  try {
+    const { ensureFreshToken } = await import('./token-refresh');
+    const { encrypt } = await import('./crypto');
+
+    const platforms = db.prepare(
+      "SELECT * FROM platforms WHERE enabled = 1"
+    ).all() as Platform[];
+
+    for (const p of platforms) {
+      try {
+        await ensureFreshToken(p, decrypt, encrypt);
+      } catch (err) {
+        console.error(`[Scheduler] Token refresh failed for platform ${p.id} (${p.type}):`, err instanceof Error ? err.message : err);
+      }
+    }
+    console.log(`[Scheduler] Token refresh check complete (${platforms.length} platforms)`);
+  } catch (err) {
+    console.error('[Scheduler] Token refresh error:', err);
+  }
+}
