@@ -113,10 +113,10 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
 
     # Logo
     logo_path = branding.get("logoPath")
-    logo_size = branding.get("logoSize", 64)
-    # Position logo in safe zone — avoid top-right IG/YT UI icons
-    # Place at right side, below the status bar area (~120px from top)
-    logo_pos = (width - logo_size - 30, 120)
+    logo_size = 80
+    # Position logo in safe zone — avoid IG camera icon (top-right) and YT UI
+    # Right side, well below status bar + IG icons (~200px from top, 100px from right)
+    logo_pos = (width - logo_size - 100, 200)
 
     logo_img, logo_mask = None, None
     if logo_path and os.path.isfile(expand(logo_path)):
