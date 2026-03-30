@@ -84,7 +84,7 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Overview</h1>
           <p className="text-sm text-zinc-400">
@@ -116,7 +116,7 @@ export default async function DashboardPage({
       </div>
 
       {/* Stat Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard title="Tenants" value={tenants.count} />
         <StatCard title="Total Posts" value={posts.count} />
         <StatCard
@@ -136,11 +136,11 @@ export default async function DashboardPage({
             {pendingPosts.map((p: any) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between rounded-md bg-zinc-800/50 px-3 py-2"
+                className="flex flex-col gap-2 rounded-md bg-zinc-800/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-xs text-zinc-200 max-w-[280px]">
+                    <span className="truncate text-xs text-zinc-200 max-w-full sm:max-w-[280px]">
                       {p.caption
                         ? p.caption.length > 80
                           ? p.caption.slice(0, 80) + "…"
@@ -172,7 +172,7 @@ export default async function DashboardPage({
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 ml-3">
+                <div className="flex items-center gap-2 sm:ml-3">
                   <ApproveButton postId={p.id} />
                   <RejectButton postId={p.id} />
                 </div>
@@ -182,7 +182,7 @@ export default async function DashboardPage({
         </div>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* Platform Health */}
         <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
           <h3 className="mb-3 text-sm font-medium text-zinc-300">
@@ -256,7 +256,7 @@ export default async function DashboardPage({
                   className="block rounded-md bg-zinc-800/50 px-3 py-2 hover:bg-zinc-800"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-200 truncate max-w-[200px]">
+                    <span className="text-xs text-zinc-200 truncate max-w-[160px] sm:max-w-[200px]">
                       {p.caption
                         ? p.caption.length > 60
                           ? p.caption.slice(0, 60) + "…"

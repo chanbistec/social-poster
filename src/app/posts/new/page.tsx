@@ -93,7 +93,7 @@ export default function NewPostPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="w-full max-w-2xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Create Post</h1>
         <p className="text-sm text-zinc-400">Compose and schedule content</p>
@@ -221,16 +221,16 @@ export default function NewPostPage() {
           </p>
         )}
 
-        <div className="flex gap-3 pt-2">
+        <div className="flex flex-col gap-3 pt-2 sm:flex-row">
           <button
-            className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700 border border-white/10 disabled:opacity-50"
+            className="rounded-md bg-zinc-800 px-4 py-2.5 text-sm text-white hover:bg-zinc-700 border border-white/10 disabled:opacity-50 min-h-[44px]"
             onClick={() => createPost("draft")}
             disabled={loading}
           >
             Save Draft
           </button>
           <button
-            className="rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-400 disabled:opacity-50"
+            className="rounded-md bg-orange-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-400 disabled:opacity-50 min-h-[44px]"
             onClick={() => createPost("pending_approval")}
             disabled={loading}
           >

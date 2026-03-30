@@ -32,7 +32,7 @@ export default function PostCard({
       href={`/posts/${post.id}`}
       className="block rounded-lg border border-white/10 bg-zinc-900/60 p-4 hover:border-orange-400/40 transition-colors"
     >
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           {/* Header: tenant + status */}
           <div className="flex items-center gap-2 flex-wrap">
@@ -51,7 +51,7 @@ export default function PostCard({
           </div>
 
           {/* Caption preview */}
-          <p className="text-sm text-zinc-200 leading-relaxed">
+          <p className="text-sm text-zinc-200 leading-relaxed break-words">
             {preview || "No caption"}
           </p>
 
@@ -79,7 +79,7 @@ export default function PostCard({
         </div>
 
         {/* Platform badges */}
-        <div className="flex flex-wrap gap-1.5 shrink-0">
+        <div className="flex flex-wrap gap-1.5 sm:shrink-0">
           {platforms.map((p) => (
             <span
               key={p}

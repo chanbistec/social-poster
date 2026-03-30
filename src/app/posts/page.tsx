@@ -52,7 +52,7 @@ export default async function PostsPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Posts</h1>
           <p className="text-sm text-zinc-400">
@@ -61,20 +61,20 @@ export default async function PostsPage({
         </div>
         <Link
           href="/posts/new"
-          className="rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-400"
+          className="inline-flex items-center justify-center rounded-md bg-orange-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-400 min-h-[44px] w-full sm:w-auto"
         >
           + New Post
         </Link>
       </div>
 
       {/* Filter bar */}
-      <form method="GET" className="flex flex-wrap items-end gap-3">
+      <form method="GET" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div>
           <label className="block text-xs text-zinc-400 mb-1">Tenant</label>
           <select
             name="tenant_id"
             defaultValue={tenantFilter}
-            className="rounded-md border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white min-w-[160px]"
+            className="w-full rounded-md border border-white/10 bg-zinc-900 px-3 py-2.5 text-sm text-white min-h-[44px] sm:w-auto sm:min-w-[160px] sm:min-h-0 sm:py-2"
           >
             <option value="">All tenants</option>
             {tenants.map((t) => (
@@ -90,7 +90,7 @@ export default async function PostsPage({
           <select
             name="status"
             defaultValue={statusFilter}
-            className="rounded-md border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white min-w-[160px]"
+            className="w-full rounded-md border border-white/10 bg-zinc-900 px-3 py-2.5 text-sm text-white min-h-[44px] sm:w-auto sm:min-w-[160px] sm:min-h-0 sm:py-2"
           >
             <option value="">All statuses</option>
             {STATUSES.map((s) => (
@@ -103,7 +103,7 @@ export default async function PostsPage({
 
         <button
           type="submit"
-          className="rounded-md bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700 border border-white/10"
+          className="rounded-md bg-zinc-800 px-4 py-2.5 text-sm text-white hover:bg-zinc-700 border border-white/10 min-h-[44px] w-full sm:w-auto"
         >
           Filter
         </button>

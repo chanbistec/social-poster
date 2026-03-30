@@ -12,7 +12,7 @@ export default async function TenantsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Tenants</h1>
           <p className="text-sm text-zinc-400">
@@ -21,7 +21,7 @@ export default async function TenantsPage() {
         </div>
         <Link
           href="/tenants/new"
-          className="rounded-md bg-orange-500 px-4 py-2 text-sm font-medium text-white hover:bg-orange-400"
+          className="inline-flex items-center justify-center rounded-md bg-orange-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-400 min-h-[44px] w-full sm:w-auto"
         >
           + Create Tenant
         </Link>
