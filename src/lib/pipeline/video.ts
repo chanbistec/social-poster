@@ -26,6 +26,10 @@ export interface VideoRenderConfig {
   audio: Record<string, unknown>;
   /** Ken Burns effect names per scene (cycles if fewer than scenes). */
   kenBurns?: string[];
+  /** Tip title for text overlays. */
+  tipTitle?: string;
+  /** Tip text for text overlays. */
+  tipText?: string;
   /** Directory to write the final MP4 into. */
   outputDir: string;
   /** Override ffmpeg binary path. Default: ~/.npm-global/bin/ffmpeg */
@@ -85,6 +89,8 @@ export async function renderVideo(
     timing: config.timing,
     audio: config.audio,
     kenBurns: config.kenBurns ?? ["zoom_in", "slow_pan", "zoom_out"],
+    tipTitle: config.tipTitle ?? "Health Tip",
+    tipText: config.tipText ?? "",
     ffmpegPath: config.ffmpegPath ?? DEFAULT_FFMPEG,
     fps: config.fps ?? 30,
     width: config.width ?? 1080,

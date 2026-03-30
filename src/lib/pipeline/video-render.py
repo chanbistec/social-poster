@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Render a branded reel/short video from scenes + narration.
 
-Accepts a JSON config via --config and produces a final MP4 via --output.
-Uses Pillow for image overlays and FFmpeg for video composition.
+Matches the original reel_gen.py approach:
+1. Generate transparent text overlay PNGs (static logo, watermark, scene text)
+2. Apply Ken Burns to RAW scene images
+3. Overlay static text on top of Ken Burns clips
+4. Encode intro + content scenes + outro
+5. Mix BGM + narration separately
+6. Mux video + audio into final MP4
+
+This means text/logo stay STATIC while the background moves.
 """
 import argparse
 import json
@@ -16,7 +23,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
-# Ken Burns filter templates (zoompan patterns)
+# Ken Burns filter templates
 # ---------------------------------------------------------------------------
 KEN_BURNS_FILTERS = {
     "zoom_in": (
@@ -50,195 +57,217 @@ KEN_BURNS_FILTERS = {
 }
 
 
-def expand(p: str) -> str:
+def expand(p):
     """Expand ~ and env vars in a path string."""
-    return os.path.expanduser(os.path.expandvars(p))
+    if not p:
+        return p
+    return os.path.expanduser(os.path.expandvars(str(p)))
 
 
-# ---------------------------------------------------------------------------
-# Pillow helpers
-# ---------------------------------------------------------------------------
+def load_font(path, size):
+    try:
+        return ImageFont.truetype(expand(path), size)
+    except (OSError, IOError):
+        # Fallbacks
+        for f in [
+            os.path.expanduser("~/.local/share/fonts/NotoSans-Bold.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]:
+            if os.path.isfile(f):
+                return ImageFont.truetype(f, size)
+        return ImageFont.load_default()
 
-def make_circular_logo(logo_path: str, size: int) -> Image.Image:
-    """Return a circular-cropped RGBA logo of the given size."""
+
+def shadow_text(draw, pos, text, font, fill, offset=3):
+    x, y = pos
+    for dx, dy in [(offset, offset), (offset, 0), (0, offset), (-1, offset)]:
+        draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0, 220))
+    draw.text(pos, text, font=font, fill=fill)
+
+
+def center_x(draw, text, font, width=1080):
+    bb = draw.textbbox((0, 0), text, font=font)
+    return (width - (bb[2] - bb[0])) // 2
+
+
+def make_circular_logo(logo_path, size):
     logo = Image.open(expand(logo_path)).convert("RGBA").resize((size, size), Image.LANCZOS)
     mask = Image.new("L", (size, size), 0)
     ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
     logo.putalpha(mask)
-    return logo
+    return logo, mask
 
 
-def apply_gradient_overlay(img: Image.Image, height_fraction: float = 0.35) -> Image.Image:
-    """Apply a dark gradient at the bottom of an image (for text legibility)."""
-    w, h = img.size
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    grad_h = int(h * height_fraction)
-    for i in range(grad_h):
-        alpha = int(180 * (i / grad_h))
-        draw.rectangle([(0, h - grad_h + i), (w, h - grad_h + i + 1)], fill=(0, 0, 0, alpha))
-    return Image.alpha_composite(img.convert("RGBA"), overlay)
+# ---------------------------------------------------------------------------
+# Generate static text overlay PNGs (transparent)
+# ---------------------------------------------------------------------------
+def generate_text_overlays(tip_title, tip_text, config, tmpdir):
+    """Create transparent PNG overlays with static text for each scene."""
+    branding = config.get("branding", {})
+    font_path = branding.get("fontPath", "")
+    width = config.get("width", 1080)
+    height = config.get("height", 1920)
 
+    ORANGE = (249, 115, 22)  # #F97316
+    WHITE = (255, 255, 255)
 
-def brand_scene(
-    scene_path: str,
-    logo: Image.Image,
-    watermark_text: str,
-    font: ImageFont.FreeTypeFont | None,
-    width: int,
-    height: int,
-) -> Image.Image:
-    """Open a scene image, resize, apply gradient + logo + watermark."""
-    img = Image.open(scene_path).convert("RGBA").resize((width, height), Image.LANCZOS)
-    img = apply_gradient_overlay(img)
+    # Logo
+    logo_path = branding.get("logoPath")
+    logo_size = branding.get("logoSize", 55)
+    logo_pos = branding.get("logoPosition", [990, 30])
+    if isinstance(logo_pos, list) and len(logo_pos) == 2:
+        logo_pos = tuple(logo_pos)
+    else:
+        logo_pos = (width - logo_size - 20, 30)
 
-    # Logo top-right (with 20px padding)
-    logo_x = width - logo.size[0] - 20
-    logo_y = 20
-    img.paste(logo, (logo_x, logo_y), logo)
+    logo_img, logo_mask = None, None
+    if logo_path and os.path.isfile(expand(logo_path)):
+        logo_img, logo_mask = make_circular_logo(logo_path, logo_size)
 
-    # Watermark bottom-center
-    draw = ImageDraw.Draw(img)
-    if font is None:
-        font = ImageDraw.getfont()
-    bbox = draw.textbbox((0, 0), watermark_text, font=font)
-    tw = bbox[2] - bbox[0]
-    tx = (width - tw) // 2
-    ty = height - 60
-    # Shadow
-    draw.text((tx + 1, ty + 1), watermark_text, fill=(0, 0, 0, 160), font=font)
-    draw.text((tx, ty), watermark_text, fill=(255, 255, 255, 220), font=font)
+    wm_text = branding.get("watermarkText", "qualitylife.lk")
+    wm_y = branding.get("watermarkY", 1860)
+    fnt_wm = load_font(font_path, 18)
 
-    return img
+    # Split tip text into 3 parts
+    words = tip_text.split()
+    total = len(words)
+    s1 = words[:total // 3]
+    s2 = words[total // 3:2 * total // 3]
+    s3 = words[2 * total // 3:]
+
+    scene_texts = [
+        # Scene 1: Hook
+        [
+            ("DID YOU KNOW?", load_font(font_path, 36), ORANGE, 160),
+            (tip_title.upper(), load_font(font_path, 52), WHITE, 250),
+        ],
+        # Scene 2: Fact
+        [
+            (" ".join(s2[:4]), load_font(font_path, 44), WHITE, 1350),
+            (" ".join(s2[4:8]) if len(s2) > 4 else "", load_font(font_path, 52), ORANGE, 1410),
+            (" ".join(s2[8:]) if len(s2) > 8 else "", load_font(font_path, 44), WHITE, 1475),
+        ],
+        # Scene 3: CTA
+        [
+            (" ".join(s3[:5]), load_font(font_path, 48), WHITE, 750),
+            (" ".join(s3[5:]) if len(s3) > 5 else "", load_font(font_path, 56), ORANGE, 820),
+        ],
+    ]
+
+    overlays = []
+    for i, texts in enumerate(scene_texts):
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+
+        # Dark gradient at bottom for text legibility
+        grad_h = int(height * 0.35)
+        for j in range(grad_h):
+            alpha = int(160 * (j / grad_h))
+            d.rectangle([(0, height - grad_h + j), (width, height - grad_h + j + 1)],
+                        fill=(0, 0, 0, alpha))
+
+        # Scene text
+        for text, font, color, y in texts:
+            if not text.strip():
+                continue
+            x = center_x(d, text, font, width)
+            shadow_text(d, (x, y), text, font, color)
+
+        # Static logo
+        if logo_img:
+            img.paste(logo_img, logo_pos, logo_mask)
+
+        # Watermark
+        bb = d.textbbox((0, 0), wm_text, font=fnt_wm)
+        tw = bb[2] - bb[0]
+        wm_x = (width - tw) // 2
+        for dx, dy in [(1, 1), (1, 0), (0, 1)]:
+            d.text((wm_x + dx, wm_y + dy), wm_text, font=fnt_wm, fill=(0, 0, 0, 180))
+        d.text((wm_x, wm_y), wm_text, font=fnt_wm, fill=(255, 255, 255, 200))
+
+        path = os.path.join(tmpdir, f"text_{i}.png")
+        img.save(path)
+        overlays.append(path)
+
+    return overlays
 
 
 # ---------------------------------------------------------------------------
 # FFmpeg helpers
 # ---------------------------------------------------------------------------
 
-def render_scene_clip(
-    ffmpeg: str,
-    image_path: str,
-    output_path: str,
-    duration: float,
-    kb_filter: str,
-    fps: int,
-    width: int,
-    height: int,
-) -> None:
-    """Render a single scene image into a Ken Burns video clip."""
+def encode_scene(ffmpeg, image_path, duration, kb_filter, output_path, fps, width, height):
+    """Ken Burns on a raw image → video clip (no text baked in)."""
     frames = int(math.ceil(duration * fps))
     vf = kb_filter.format(frames=frames, w=width, h=height, fps=fps)
     cmd = [
         ffmpeg, "-y",
-        "-loop", "1",
-        "-i", image_path,
+        "-loop", "1", "-i", image_path,
         "-vf", vf,
         "-t", f"{duration:.3f}",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-r", str(fps),
-        "-an",
-        output_path,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps),
+        "-an", output_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def compose_final(
-    ffmpeg: str,
-    clip_paths: list[str],
-    narration_path: str | None,
-    bgm_path: str | None,
-    output_path: str,
-    voice_delay: float,
-    bgm_volume: float,
-    voice_volume: float,
-    bgm_fade_in: float,
-    bgm_fade_out: float,
-    total_duration: float,
-) -> None:
-    """Concat clips, mix narration + BGM, output final MP4."""
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        for cp in clip_paths:
-            f.write(f"file '{cp}'\n")
-        concat_list = f.name
+def overlay_text(ffmpeg, video_path, text_png, output_path):
+    """Overlay a transparent text PNG on top of a video clip (static text)."""
+    r = subprocess.run([
+        ffmpeg, "-y",
+        "-i", video_path, "-i", text_png,
+        "-filter_complex", "[0:v][1:v]overlay=0:0",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast",
+        "-an", output_path,
+    ], capture_output=True)
+    if r.returncode != 0:
+        # Fallback: use video without overlay
+        import shutil
+        shutil.copy2(video_path, output_path)
 
-    try:
-        # Build command
-        inputs = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", concat_list]
-        filter_parts: list[str] = []
-        audio_inputs: list[str] = []
-        stream_idx = 1  # 0 = concat video
 
-        # Narration
-        if narration_path and os.path.isfile(expand(narration_path)):
-            inputs += ["-i", expand(narration_path)]
-            filter_parts.append(
-                f"[{stream_idx}:a]adelay={int(voice_delay * 1000)}|{int(voice_delay * 1000)},"
-                f"volume={voice_volume}[voice]"
-            )
-            audio_inputs.append("[voice]")
-            stream_idx += 1
-
-        # BGM
-        if bgm_path and os.path.isfile(expand(bgm_path)):
-            inputs += ["-i", expand(bgm_path)]
-            filter_parts.append(
-                f"[{stream_idx}:a]volume={bgm_volume},"
-                f"afade=t=in:st=0:d={bgm_fade_in},"
-                f"afade=t=out:st={max(0, total_duration - bgm_fade_out)}:d={bgm_fade_out}[bgm]"
-            )
-            audio_inputs.append("[bgm]")
-            stream_idx += 1
-
-        # Mix audio streams
-        if len(audio_inputs) > 1:
-            mix = "".join(audio_inputs) + f"amix=inputs={len(audio_inputs)}:duration=first[aout]"
-            filter_parts.append(mix)
-            audio_map = ["-map", "0:v", "-map", "[aout]"]
-        elif len(audio_inputs) == 1:
-            tag = audio_inputs[0]
-            audio_map = ["-map", "0:v", "-map", tag]
-        else:
-            audio_map = ["-map", "0:v"]
-
-        filter_complex = ";".join(filter_parts) if filter_parts else None
-
-        cmd = inputs
-        if filter_complex:
-            cmd += ["-filter_complex", filter_complex]
-        cmd += audio_map
-        cmd += [
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-pix_fmt", "yuv420p",
-            "-t", f"{total_duration:.3f}",
-            output_path,
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
-    finally:
-        os.unlink(concat_list)
+def mix_audio(ffmpeg, bgm_path, narration_path, total_dur, voice_delay, bgm_volume,
+              voice_volume, bgm_fade_in, bgm_fade_out, output_path):
+    """Mix BGM + delayed narration into a single audio file."""
+    fade_out_start = max(0, total_dur - bgm_fade_out)
+    cmd = [
+        ffmpeg, "-y",
+        "-i", expand(bgm_path), "-i", expand(narration_path),
+        "-filter_complex",
+        f"[0:a]atrim=0:{total_dur},volume={bgm_volume},"
+        f"afade=t=in:st=0:d={bgm_fade_in},"
+        f"afade=t=out:st={fade_out_start}:d={bgm_fade_out}[bgm];"
+        f"[1:a]adelay={int(voice_delay * 1000)}|{int(voice_delay * 1000)},"
+        f"volume={voice_volume}[voice];"
+        f"[bgm][voice]amix=inputs=2:weights=1 1:duration=first,"
+        f"atrim=0:{total_dur}[aout]",
+        "-map", "[aout]", "-c:a", "aac", "-b:a", "128k",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Render a branded reel/short video.")
-    parser.add_argument("--config", required=True, help="JSON config file path")
-    parser.add_argument("--output", required=True, help="Output MP4 path")
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     with open(args.config) as f:
         config = json.load(f)
 
-    scenes: list[str] = config["scenes"]
+    scenes = config["scenes"]
     narration = config.get("narration", {})
     branding = config.get("branding", {})
     timing = config.get("timing", {})
     audio = config.get("audio", {})
-    kb_names: list[str] = config.get("kenBurns", ["zoom_in", "slow_pan", "zoom_out"])
+    kb_names = config.get("kenBurns", ["zoom_in", "slow_pan", "zoom_out"])
+    tip_title = config.get("tipTitle", "Health Tip")
+    tip_text = config.get("tipText", "")
 
     ffmpeg = expand(config.get("ffmpegPath", "ffmpeg"))
     fps = config.get("fps", 30)
@@ -249,7 +278,7 @@ def main() -> None:
     outro_dur = timing.get("outroDuration", 3.0)
     voice_delay = timing.get("voiceDelay", 2.0)
     voice_buffer = timing.get("voiceBuffer", 0.5)
-    scene_dist: list[float] = timing.get("sceneDistribution", [])
+    scene_dist = timing.get("sceneDistribution", [0.3, 0.4, 0.3])
 
     narration_dur = narration.get("duration", 0)
     narration_wav = narration.get("wavPath")
@@ -260,104 +289,110 @@ def main() -> None:
     bgm_fade_in = audio.get("bgmFadeIn", 1.5)
     bgm_fade_out = audio.get("bgmFadeOut", 2.0)
 
-    logo_path = branding.get("logoPath")
-    logo_size = branding.get("logoSize", 55)
-    watermark_text = branding.get("watermarkText", "qualitylife.lk")
-    font_path = branding.get("fontPath")
     intro_frame = branding.get("introFrame")
     outro_frame = branding.get("outroFrame")
 
-    # Load font
-    font: ImageFont.FreeTypeFont | None = None
-    if font_path:
-        fp = expand(font_path)
-        if os.path.isfile(fp):
-            font = ImageFont.truetype(fp, 22)
-    if font is None:
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
-        except OSError:
-            font = None  # fallback to default
-
-    # Circular logo
-    logo_img = None
-    if logo_path and os.path.isfile(expand(logo_path)):
-        logo_img = make_circular_logo(logo_path, logo_size)
-
-    # ---- Compute scene durations ----
-    # Content duration = narration_dur + voice_buffer (time scenes play while voice speaks)
+    # Calculate durations
     content_dur = narration_dur + voice_buffer if narration_dur > 0 else 5.0 * len(scenes)
-
     if scene_dist and len(scene_dist) == len(scenes):
-        scene_durations = [content_dur * d for d in scene_dist]
+        scene_durs = [round(content_dur * d, 1) for d in scene_dist]
+        scene_durs[-1] = round(content_dur - sum(scene_durs[:-1]), 1)
     else:
-        per_scene = content_dur / max(len(scenes), 1)
-        scene_durations = [per_scene] * len(scenes)
+        per = content_dur / max(len(scenes), 1)
+        scene_durs = [round(per, 1)] * len(scenes)
 
-    total_duration = intro_dur + sum(scene_durations) + outro_dur
+    total_dur = intro_dur + sum(scene_durs) + outro_dur
 
-    # ---- Brand scene images ----
     tmpdir = tempfile.mkdtemp(prefix="video_render_")
-    branded_paths: list[str] = []
-    for i, sp in enumerate(scenes):
-        img = brand_scene(
-            expand(sp),
-            logo_img,
-            watermark_text,
-            font,
-            width,
-            height,
-        ) if logo_img else Image.open(expand(sp)).convert("RGBA").resize((width, height), Image.LANCZOS)
-        out_path = os.path.join(tmpdir, f"scene_{i:03d}.png")
-        img.convert("RGB").save(out_path)
-        branded_paths.append(out_path)
 
-    # ---- Render clips ----
-    clip_paths: list[str] = []
+    # --- Step 1: Generate static text overlay PNGs ---
+    text_overlays = generate_text_overlays(tip_title, tip_text, config, tmpdir)
 
-    # Intro clip
-    if intro_frame and os.path.isfile(expand(intro_frame)):
-        intro_clip = os.path.join(tmpdir, "clip_intro.mp4")
-        render_scene_clip(ffmpeg, expand(intro_frame), intro_clip, intro_dur,
-                          KEN_BURNS_FILTERS["zoom_out"], fps, width, height)
-        clip_paths.append(intro_clip)
-
-    # Content scene clips
-    for i, (bp, dur) in enumerate(zip(branded_paths, scene_durations)):
+    # --- Step 2: Ken Burns on raw scenes, then overlay static text ---
+    scene_clips = []
+    for i, (scene_path, dur) in enumerate(zip(scenes, scene_durs)):
         kb_name = kb_names[i % len(kb_names)]
         kb_filter = KEN_BURNS_FILTERS.get(kb_name, KEN_BURNS_FILTERS["zoom_in"])
-        clip_path = os.path.join(tmpdir, f"clip_scene_{i:03d}.mp4")
-        render_scene_clip(ffmpeg, bp, clip_path, dur, kb_filter, fps, width, height)
-        clip_paths.append(clip_path)
 
-    # Outro clip
+        # Ken Burns on raw image
+        clean_clip = os.path.join(tmpdir, f"clean_{i}.mp4")
+        encode_scene(ffmpeg, expand(scene_path), dur, kb_filter, clean_clip, fps, width, height)
+
+        # Overlay static text on top
+        if i < len(text_overlays):
+            final_clip = os.path.join(tmpdir, f"final_{i}.mp4")
+            overlay_text(ffmpeg, clean_clip, text_overlays[i], final_clip)
+            scene_clips.append(final_clip)
+        else:
+            scene_clips.append(clean_clip)
+
+    # --- Step 3: Encode intro ---
+    intro_clip = None
+    if intro_frame and os.path.isfile(expand(intro_frame)):
+        intro_clip = os.path.join(tmpdir, "intro.mp4")
+        encode_scene(ffmpeg, expand(intro_frame), intro_dur,
+                     KEN_BURNS_FILTERS["zoom_out"], intro_clip, fps, width, height)
+
+    # --- Step 4: Encode outro ---
+    outro_clip = None
     if outro_frame and os.path.isfile(expand(outro_frame)):
-        outro_clip = os.path.join(tmpdir, "clip_outro.mp4")
-        render_scene_clip(ffmpeg, expand(outro_frame), outro_clip, outro_dur,
-                          KEN_BURNS_FILTERS["slow_zoom_in"], fps, width, height)
-        clip_paths.append(outro_clip)
+        outro_clip = os.path.join(tmpdir, "outro.mp4")
+        encode_scene(ffmpeg, expand(outro_frame), outro_dur,
+                     KEN_BURNS_FILTERS["slow_zoom_in"], outro_clip, fps, width, height)
 
-    # ---- Final composition ----
+    # --- Step 5: Concat video clips ---
+    concat_file = os.path.join(tmpdir, "concat.txt")
+    with open(concat_file, "w") as f:
+        if intro_clip:
+            f.write(f"file '{intro_clip}'\n")
+        for clip in scene_clips:
+            f.write(f"file '{clip}'\n")
+        if outro_clip:
+            f.write(f"file '{outro_clip}'\n")
+
+    video_path = os.path.join(tmpdir, "video.mp4")
+    subprocess.run([
+        ffmpeg, "-y", "-f", "concat", "-safe", "0",
+        "-i", concat_file, "-c", "copy", video_path,
+    ], check=True, capture_output=True)
+
+    # --- Step 6: Mix audio (BGM + narration) ---
+    audio_path = os.path.join(tmpdir, "audio.m4a")
+    if bgm_path and narration_wav and os.path.isfile(expand(bgm_path)) and os.path.isfile(expand(narration_wav)):
+        mix_audio(ffmpeg, bgm_path, narration_wav, total_dur,
+                  voice_delay, bgm_volume, voice_volume, bgm_fade_in, bgm_fade_out,
+                  audio_path)
+    elif narration_wav and os.path.isfile(expand(narration_wav)):
+        # Just narration, no BGM
+        subprocess.run([
+            ffmpeg, "-y", "-i", expand(narration_wav),
+            "-af", f"adelay={int(voice_delay * 1000)}|{int(voice_delay * 1000)}",
+            "-c:a", "aac", "-b:a", "128k", audio_path,
+        ], check=True, capture_output=True)
+    else:
+        audio_path = None
+
+    # --- Step 7: Final mux (video + audio) ---
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    if audio_path and os.path.isfile(audio_path):
+        subprocess.run([
+            ffmpeg, "-y",
+            "-i", video_path, "-i", audio_path,
+            "-c:v", "copy", "-c:a", "copy",
+            "-t", str(total_dur),
+            args.output,
+        ], check=True, capture_output=True)
+    else:
+        subprocess.run([
+            ffmpeg, "-y", "-i", video_path,
+            "-c:v", "copy", "-an",
+            "-t", str(total_dur),
+            args.output,
+        ], check=True, capture_output=True)
 
-    compose_final(
-        ffmpeg=ffmpeg,
-        clip_paths=clip_paths,
-        narration_path=narration_wav,
-        bgm_path=bgm_path,
-        output_path=args.output,
-        voice_delay=voice_delay,
-        bgm_volume=bgm_volume,
-        voice_volume=voice_volume,
-        bgm_fade_in=bgm_fade_in,
-        bgm_fade_out=bgm_fade_out,
-        total_duration=total_duration,
-    )
-
-    # ---- Output result as JSON to stdout ----
     result = {
         "videoPath": os.path.abspath(args.output),
-        "duration": round(total_duration, 3),
+        "duration": round(total_dur, 3),
         "scenes": len(scenes),
         "tmpDir": tmpdir,
     }

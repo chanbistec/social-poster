@@ -230,6 +230,8 @@ export async function executePipeline(
           timing: videoTiming,
           audio: videoAudio,
           kenBurns,
+          tipTitle: input.title,
+          tipText: input.tip,
           outputDir,
         });
         stepResults.video = video;
