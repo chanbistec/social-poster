@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { randomUUID } from "crypto";
 
-const PYTHON_SCRIPT = join(__dirname, "social-image-render.py");
+const PYTHON_SCRIPT = join(process.cwd(), "src", "lib", "pipeline", "social-image-render.py");
 
 const DEFAULT_BRANDING_CONFIG = join(
   process.env.HOME || "/home/chanclaw",

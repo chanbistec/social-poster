@@ -50,7 +50,7 @@ export interface VideoRenderResult {
 // ---------------------------------------------------------------------------
 
 /** Path to the Python render script (co-located). */
-const PYTHON_SCRIPT = join(__dirname, "video-render.py");
+const PYTHON_SCRIPT = join(process.cwd(), "src", "lib", "pipeline", "video-render.py");
 
 /** Default ffmpeg location. */
 const DEFAULT_FFMPEG = join(
