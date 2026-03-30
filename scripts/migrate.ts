@@ -63,12 +63,63 @@ export function runMigrations(db: Database.Database): void {
       published_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS pipeline_templates (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id     TEXT    NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      name          TEXT    NOT NULL,
+      description   TEXT,
+      type          TEXT    NOT NULL CHECK (type IN ('reel', 'short', 'social_image', 'custom')),
+      platforms     TEXT    NOT NULL DEFAULT '[]',
+      steps         TEXT    NOT NULL DEFAULT '[]',
+      branding      TEXT    NOT NULL DEFAULT '{}',
+      tts_config    TEXT,
+      imagen_config TEXT,
+      video_config  TEXT,
+      created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS pipeline_runs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id   INTEGER NOT NULL REFERENCES pipeline_templates(id) ON DELETE CASCADE,
+      post_id       INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+      status        TEXT    NOT NULL DEFAULT 'pending',
+      input_params  TEXT    NOT NULL DEFAULT '{}',
+      step_results  TEXT,
+      output_paths  TEXT,
+      error         TEXT,
+      started_at    TEXT,
+      completed_at  TEXT,
+      created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS tenant_branding (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id   TEXT    NOT NULL REFERENCES tenants(id) ON DELETE CASCADE UNIQUE,
+      logo_path   TEXT,
+      colors      TEXT    NOT NULL DEFAULT '{}',
+      fonts       TEXT    NOT NULL DEFAULT '{}',
+      intro_frame TEXT,
+      outro_frame TEXT,
+      watermark   TEXT,
+      bgm_path    TEXT,
+      backgrounds TEXT    NOT NULL DEFAULT '{}',
+      created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+
     -- Indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_platforms_tenant ON platforms(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_posts_tenant     ON posts(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_posts_status     ON posts(status);
     CREATE INDEX IF NOT EXISTS idx_posts_scheduled  ON posts(scheduled_at);
     CREATE INDEX IF NOT EXISTS idx_publish_post     ON publish_results(post_id);
+
+    -- Pipeline indexes
+    CREATE INDEX IF NOT EXISTS idx_pipeline_templates_tenant ON pipeline_templates(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_template    ON pipeline_runs(template_id);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status      ON pipeline_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_tenant_branding_tenant    ON tenant_branding(tenant_id);
   `);
 }
 
