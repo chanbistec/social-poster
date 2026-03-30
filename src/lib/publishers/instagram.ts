@@ -8,7 +8,7 @@
 
 const GRAPH_API = 'https://graph.facebook.com/v21.0';
 const POLL_INTERVAL_MS = 5_000;
-const MAX_POLL_MS = 60_000;
+const MAX_POLL_MS = 120_000;
 
 // ── Types ──
 
