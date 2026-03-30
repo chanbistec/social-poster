@@ -69,6 +69,17 @@ export async function publishToYouTube(
     const title = caption.split('\n')[0].slice(0, 100) || 'Untitled';
     const description = caption;
 
+    // Pre-flight quota check — a lightweight call to verify API access
+    try {
+      await youtube.channels.list({ part: ['id'], mine: true });
+    } catch (quotaErr: unknown) {
+      const msg = quotaErr instanceof Error ? quotaErr.message : String(quotaErr);
+      if (msg.includes('quota') || msg.includes('exceeded') || msg.includes('rateLimitExceeded')) {
+        return { success: false, error: `YouTube API quota exceeded. Try again tomorrow. (${msg})` };
+      }
+      // Other errors (e.g. auth) — let the upload attempt handle it
+    }
+
     // Upload video via resumable upload
     const response = await youtube.videos.insert({
       part: ['snippet', 'status'],
