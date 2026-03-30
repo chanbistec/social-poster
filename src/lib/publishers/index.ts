@@ -92,7 +92,16 @@ async function publishToPlatform(
         };
       }
 
-      const publicUrl = `${options.media_base_url.replace(/\/$/, '')}/${mediaPath.replace(/^\//, '')}`;
+      // Convert absolute path to relative URL path
+      // e.g. /home/.../social-poster/data/pipeline-runs/6/reel.mp4 → pipeline-runs/6/reel.mp4
+      let relativePath = mediaPath;
+      const dataPrefix = process.cwd() + '/data/';
+      if (relativePath.startsWith(dataPrefix)) {
+        relativePath = relativePath.slice(dataPrefix.length);
+      } else {
+        relativePath = relativePath.replace(/^\//, '');
+      }
+      const publicUrl = `${options.media_base_url.replace(/\/$/, '')}/${relativePath}`;
 
       if (mediaType === 'image') {
         const result = await publishPhotoToInstagram(creds, publicUrl, caption);
