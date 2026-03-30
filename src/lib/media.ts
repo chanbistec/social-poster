@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const MEDIA_ROOT = path.join(process.cwd(), 'data', 'media');
+const DATA_ROOT = path.join(process.cwd(), 'data');
 
 const ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -79,6 +80,14 @@ export async function saveUploadedFile(file: File, tenantId: string): Promise<Up
  * Validates that the resolved path stays within MEDIA_ROOT to prevent traversal.
  */
 export function getMediaPath(relativePath: string): string {
+  // Allow serving from data/pipeline-runs/ and data/branding/ in addition to data/media/
+  if (relativePath.startsWith('pipeline-runs/') || relativePath.startsWith('branding/')) {
+    const resolved = path.resolve(DATA_ROOT, relativePath);
+    if (!resolved.startsWith(DATA_ROOT)) {
+      throw new Error('Invalid media path');
+    }
+    return resolved;
+  }
   const resolved = path.resolve(MEDIA_ROOT, relativePath);
   if (!resolved.startsWith(MEDIA_ROOT)) {
     throw new Error('Invalid media path');
