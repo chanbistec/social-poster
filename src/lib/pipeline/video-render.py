@@ -113,19 +113,18 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
 
     # Logo
     logo_path = branding.get("logoPath")
-    logo_size = branding.get("logoSize", 55)
-    logo_pos = branding.get("logoPosition", [990, 30])
-    if isinstance(logo_pos, list) and len(logo_pos) == 2:
-        logo_pos = tuple(logo_pos)
-    else:
-        logo_pos = (width - logo_size - 20, 30)
+    logo_size = branding.get("logoSize", 64)
+    # Position logo in safe zone — avoid top-right IG/YT UI icons
+    # Place at right side, below the status bar area (~120px from top)
+    logo_pos = (width - logo_size - 30, 120)
 
     logo_img, logo_mask = None, None
     if logo_path and os.path.isfile(expand(logo_path)):
         logo_img, logo_mask = make_circular_logo(logo_path, logo_size)
 
     wm_text = branding.get("watermarkText", "qualitylife.lk")
-    wm_y = branding.get("watermarkY", 1860)
+    # Keep watermark above IG/YT bottom UI (safe zone ends ~1700px on 1920h)
+    wm_y = 1680
     fnt_wm = load_font(font_path, 18)
 
     # Split tip text into 3 parts
@@ -135,22 +134,23 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
     s2 = words[total // 3:2 * total // 3]
     s3 = words[2 * total // 3:]
 
+    # Safe zone for text: y=250 to y=1600 (avoids IG/YT UI at top and bottom)
     scene_texts = [
-        # Scene 1: Hook
+        # Scene 1: Hook — upper-center area
         [
-            ("DID YOU KNOW?", load_font(font_path, 36), ORANGE, 160),
-            (tip_title.upper(), load_font(font_path, 52), WHITE, 250),
+            ("DID YOU KNOW?", load_font(font_path, 38), ORANGE, 350),
+            (tip_title.upper(), load_font(font_path, 54), WHITE, 420),
         ],
-        # Scene 2: Fact
+        # Scene 2: Fact — center area
         [
-            (" ".join(s2[:4]), load_font(font_path, 44), WHITE, 1350),
-            (" ".join(s2[4:8]) if len(s2) > 4 else "", load_font(font_path, 52), ORANGE, 1410),
-            (" ".join(s2[8:]) if len(s2) > 8 else "", load_font(font_path, 44), WHITE, 1475),
+            (" ".join(s2[:4]), load_font(font_path, 44), WHITE, 800),
+            (" ".join(s2[4:8]) if len(s2) > 4 else "", load_font(font_path, 52), ORANGE, 870),
+            (" ".join(s2[8:]) if len(s2) > 8 else "", load_font(font_path, 44), WHITE, 940),
         ],
-        # Scene 3: CTA
+        # Scene 3: CTA — center area
         [
             (" ".join(s3[:5]), load_font(font_path, 48), WHITE, 750),
-            (" ".join(s3[5:]) if len(s3) > 5 else "", load_font(font_path, 56), ORANGE, 820),
+            (" ".join(s3[5:]) if len(s3) > 5 else "", load_font(font_path, 56), ORANGE, 830),
         ],
     ]
 
@@ -159,12 +159,18 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
         img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
 
-        # Dark gradient at bottom for text legibility
-        grad_h = int(height * 0.35)
+        # Dark vignette overlay for text legibility — top and bottom gradients
+        # Bottom gradient
+        grad_h = int(height * 0.40)
         for j in range(grad_h):
-            alpha = int(160 * (j / grad_h))
+            alpha = int(140 * (j / grad_h))
             d.rectangle([(0, height - grad_h + j), (width, height - grad_h + j + 1)],
                         fill=(0, 0, 0, alpha))
+        # Top gradient (lighter)
+        top_h = int(height * 0.25)
+        for j in range(top_h):
+            alpha = int(100 * (1 - j / top_h))
+            d.rectangle([(0, j), (width, j + 1)], fill=(0, 0, 0, alpha))
 
         # Scene text
         for text, font, color, y in texts:
