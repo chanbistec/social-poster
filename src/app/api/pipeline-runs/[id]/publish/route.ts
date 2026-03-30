@@ -35,9 +35,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Pipeline run not found' }, { status: 404 });
   }
 
-  if (run.status !== 'approved') {
+  if (run.status !== 'approved' && run.status !== 'failed' && run.status !== 'published') {
     return NextResponse.json(
-      { error: `Cannot publish run with status "${run.status}". Only approved runs can be published.` },
+      { error: `Cannot publish run with status "${run.status}". Only approved, failed, or published runs can be republished.` },
       { status: 400 },
     );
   }
@@ -55,6 +55,12 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Associated post not found' }, { status: 404 });
   }
 
+  // Reset post status for republish
+  if (post.status === 'failed' || post.status === 'published') {
+    db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?')
+      .run('approved', new Date().toISOString(), post.id);
+    post.status = 'approved' as any;
+  }
   if (post.status !== 'approved' && post.status !== 'scheduled') {
     return NextResponse.json(
       { error: `Post status is "${post.status}". Only approved or scheduled posts can be published.` },

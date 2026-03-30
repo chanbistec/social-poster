@@ -96,15 +96,35 @@ export default function RunActions({ runId, status, templateId }: RunActionsProp
           </button>
         )}
 
-        {/* Failed → Retry */}
-        {status === "failed" && (
+        {/* Published → Republish (retry publishing to failed platforms) */}
+        {status === "published" && (
           <button
-            onClick={() => handleAction("retry")}
+            onClick={() => handleAction("publish")}
             disabled={loading !== null}
-            className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+            className="rounded-lg border border-orange-500/50 bg-orange-600/20 px-5 py-2.5 text-sm font-medium text-orange-300 hover:bg-orange-600 hover:text-white disabled:opacity-50 transition-colors"
           >
-            Retry
+            {loading === "publish" ? "Republishing..." : "Republish"}
           </button>
+        )}
+
+        {/* Failed → Republish + Retry (regenerate) */}
+        {status === "failed" && (
+          <>
+            <button
+              onClick={() => handleAction("publish")}
+              disabled={loading !== null}
+              className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+            >
+              {loading === "publish" ? "Republishing..." : "Republish"}
+            </button>
+            <button
+              onClick={() => handleAction("retry")}
+              disabled={loading !== null}
+              className="rounded-lg border border-white/10 bg-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+            >
+              Regenerate New
+            </button>
+          </>
         )}
       </div>
     </div>
