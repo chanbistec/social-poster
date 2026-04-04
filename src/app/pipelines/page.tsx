@@ -1,4 +1,5 @@
 import Link from "next/link";
+export const dynamic = 'force-dynamic';
 import db from "@/lib/db";
 
 const TYPE_BADGES: Record<string, { label: string; color: string }> = {

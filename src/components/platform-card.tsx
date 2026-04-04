@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import type { PlatformType } from "@/lib/types";
 import PlatformForm from "./platform-form";
 
@@ -71,12 +72,13 @@ export default function PlatformCard({
       const res = await fetch(`/api/platforms/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || "Failed to delete platform");
+        toast.error(data.error || "Failed to delete platform");
         return;
       }
+      toast.success("Platform deleted");
       router.refresh();
     } catch {
-      alert("Failed to delete platform");
+      toast.error("Failed to delete platform");
     } finally {
       setDeleting(false);
       setConfirmDelete(false);
@@ -110,9 +112,9 @@ export default function PlatformCard({
                 try {
                   const res = await fetch(`/api/platforms/${id}/refresh`, { method: 'POST' });
                   const data = await res.json();
-                  if (!res.ok) alert(data.error || 'Refresh failed');
-                  else { alert(data.data.message); router.refresh(); }
-                } catch { alert('Refresh failed'); }
+                  if (!res.ok) toast.error(data.error || 'Refresh failed');
+                  else { toast.success(data.data.message); router.refresh(); }
+                } catch { toast.error('Refresh failed'); }
               }}
               className="rounded-md px-2.5 py-1 text-xs text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-colors"
             >
