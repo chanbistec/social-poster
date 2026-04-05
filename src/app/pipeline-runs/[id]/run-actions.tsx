@@ -8,9 +8,10 @@ interface RunActionsProps {
   runId: number;
   status: PipelineRunStatus;
   templateId: number;
+  hasFailedPlatforms?: boolean;
 }
 
-export default function RunActions({ runId, status, templateId }: RunActionsProps) {
+export default function RunActions({ runId, status, templateId, hasFailedPlatforms = false }: RunActionsProps) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +22,6 @@ export default function RunActions({ runId, status, templateId }: RunActionsProp
 
     try {
       if (action === "retry") {
-        // Redirect back to the run form for the template
         router.push(`/pipelines/${templateId}/run`);
         return;
       }
@@ -38,7 +38,6 @@ export default function RunActions({ runId, status, templateId }: RunActionsProp
         return;
       }
 
-      // Refresh the page to show updated status
       router.refresh();
     } catch {
       setError("Network error — please try again");
@@ -47,14 +46,12 @@ export default function RunActions({ runId, status, templateId }: RunActionsProp
     }
   }
 
-  // No actions for certain states
-  if (
-    status === "pending" ||
-    status === "generating" ||
-    status === "publishing"
-  ) {
+  if (status === "pending" || status === "generating" || status === "publishing") {
     return null;
   }
+
+  const publishLabel = hasFailedPlatforms ? "Retry failed platforms" : status === "published" || status === "failed" ? "Republish all platforms" : "Publish";
+  const publishBusyLabel = hasFailedPlatforms ? "Retrying failed platforms..." : status === "published" || status === "failed" ? "Republishing..." : "Publishing...";
 
   return (
     <div className="space-y-3">
@@ -65,62 +62,48 @@ export default function RunActions({ runId, status, templateId }: RunActionsProp
       )}
 
       <div className="flex flex-wrap gap-3">
-        {/* Preview → Approve + Regenerate */}
         {status === "preview" && (
           <>
             <button
               onClick={() => handleAction("approve")}
               disabled={loading !== null}
-              className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+              className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-orange-500 disabled:opacity-50"
             >
               {loading === "approve" ? "Approving..." : "Approve"}
             </button>
             <button
               onClick={() => handleAction("retry")}
               disabled={loading !== null}
-              className="rounded-lg border border-white/10 bg-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+              className="rounded-lg border border-white/10 bg-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700 disabled:opacity-50"
             >
               Regenerate
             </button>
           </>
         )}
 
-        {/* Approved → Publish */}
         {status === "approved" && (
           <button
             onClick={() => handleAction("publish")}
             disabled={loading !== null}
-            className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+            className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-orange-500 disabled:opacity-50"
           >
-            {loading === "publish" ? "Publishing..." : "Publish"}
+            {loading === "publish" ? publishBusyLabel : publishLabel}
           </button>
         )}
 
-        {/* Published → Republish (retry publishing to failed platforms) */}
-        {status === "published" && (
-          <button
-            onClick={() => handleAction("publish")}
-            disabled={loading !== null}
-            className="rounded-lg border border-orange-500/50 bg-orange-600/20 px-5 py-2.5 text-sm font-medium text-orange-300 hover:bg-orange-600 hover:text-white disabled:opacity-50 transition-colors"
-          >
-            {loading === "publish" ? "Republishing..." : "Republish"}
-          </button>
-        )}
-
-        {/* Failed → Republish + Retry (regenerate) */}
-        {status === "failed" && (
+        {(status === "published" || status === "failed") && (
           <>
             <button
               onClick={() => handleAction("publish")}
               disabled={loading !== null}
-              className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:opacity-50 transition-colors"
+              className="rounded-lg border border-orange-500/50 bg-orange-600/20 px-5 py-2.5 text-sm font-medium text-orange-300 transition-colors hover:bg-orange-600 hover:text-white disabled:opacity-50"
             >
-              {loading === "publish" ? "Republishing..." : "Republish"}
+              {loading === "publish" ? publishBusyLabel : publishLabel}
             </button>
             <button
               onClick={() => handleAction("retry")}
               disabled={loading !== null}
-              className="rounded-lg border border-white/10 bg-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition-colors"
+              className="rounded-lg border border-white/10 bg-zinc-800 px-5 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700 disabled:opacity-50"
             >
               Regenerate New
             </button>

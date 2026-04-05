@@ -8,6 +8,12 @@ import type { PipelineRun, Post, PostParsed, Platform, PlatformType } from '@/li
 
 type Params = { params: Promise<{ id: string }> };
 
+type PublishResultRow = {
+  id: number;
+  platform: PlatformType;
+  status: 'pending' | 'success' | 'failed';
+};
+
 function parsePost(post: Post): PostParsed {
   return {
     ...post,
@@ -15,6 +21,30 @@ function parsePost(post: Post): PostParsed {
     media_paths: JSON.parse(post.media_paths) as string[],
     platforms: JSON.parse(post.platforms) as PlatformType[],
   };
+}
+
+function getRetryPlatforms(postId: number, requestedPlatforms: PlatformType[]) {
+  if (requestedPlatforms.length > 0) return requestedPlatforms;
+
+  const latestRows = db
+    .prepare(
+      `SELECT pr.id, pr.platform, pr.status
+       FROM publish_results pr
+       WHERE pr.post_id = ?
+         AND pr.id IN (
+           SELECT MAX(inner_pr.id)
+           FROM publish_results inner_pr
+           WHERE inner_pr.post_id = ?
+           GROUP BY inner_pr.platform
+         )`
+    )
+    .all(postId, postId) as PublishResultRow[];
+
+  const failedPlatforms = latestRows
+    .filter((row) => row.status === 'failed')
+    .map((row) => row.platform);
+
+  return failedPlatforms;
 }
 
 /** POST /api/pipeline-runs/:id/publish — Publish approved pipeline content */
@@ -49,17 +79,22 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  // Load the post
+  const requestBody = await request.json().catch(() => ({}));
+  const requestedPlatforms = Array.isArray(requestBody?.platforms)
+    ? requestBody.platforms.filter((platform: unknown): platform is PlatformType =>
+        platform === 'youtube' || platform === 'instagram' || platform === 'facebook'
+      )
+    : [];
+
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(run.post_id) as Post | undefined;
   if (!post) {
     return NextResponse.json({ error: 'Associated post not found' }, { status: 404 });
   }
 
-  // Reset post status for republish
   if (post.status === 'failed' || post.status === 'published') {
     db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?')
       .run('approved', new Date().toISOString(), post.id);
-    post.status = 'approved' as any;
+    post.status = 'approved' as never;
   }
   if (post.status !== 'approved' && post.status !== 'scheduled') {
     return NextResponse.json(
@@ -69,13 +104,21 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const parsed = parsePost(post);
+  const targetPlatforms = run.status === 'approved'
+    ? parsed.platforms
+    : getRetryPlatforms(post.id, requestedPlatforms);
 
-  // Fetch enabled platform configs for this tenant
-  const platforms = parsed.platforms;
-  const placeholders = platforms.map(() => '?').join(', ');
+  if (targetPlatforms.length === 0) {
+    return NextResponse.json(
+      { error: 'No failed platforms to retry for this run.' },
+      { status: 400 },
+    );
+  }
+
+  const placeholders = targetPlatforms.map(() => '?').join(', ');
   const platformRows = db.prepare(
     `SELECT * FROM platforms WHERE tenant_id = ? AND type IN (${placeholders}) AND enabled = 1`,
-  ).all(post.tenant_id, ...platforms) as Platform[];
+  ).all(post.tenant_id, ...targetPlatforms) as Platform[];
 
   if (platformRows.length === 0) {
     return NextResponse.json(
@@ -84,27 +127,22 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  // Refresh tokens if needed
   for (const p of platformRows) {
     try {
       await ensureFreshToken(p, decrypt, encrypt);
     } catch (err) {
       console.error(`[Publish] Token refresh failed for ${p.type}:`, err);
-      // Continue anyway — publish will fail with auth error if token is truly expired
     }
   }
 
-  // Re-load platforms after potential refresh
   const freshPlatforms = db.prepare(
     `SELECT * FROM platforms WHERE tenant_id = ? AND type IN (${placeholders}) AND enabled = 1`,
-  ).all(post.tenant_id, ...platforms) as Platform[];
+  ).all(post.tenant_id, ...targetPlatforms) as Platform[];
 
-  // Build media base URL
   const host = request.headers.get('host') ?? 'localhost:3000';
   const proto = request.headers.get('x-forwarded-proto') ?? 'http';
   const mediaBaseUrl = `${proto}://${host}/api/media`;
 
-  // Decrypt credentials and build platform configs
   const platformConfigs: PlatformConfig[] = freshPlatforms.map((p) => {
     const credentials = JSON.parse(decrypt(p.credentials)) as PlatformConfig['credentials'];
     const config = p.config ? JSON.parse(p.config) : {};
@@ -117,15 +155,16 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
 
   const now = new Date().toISOString();
-
-  // Mark as publishing
   db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('publishing', now, post.id);
   db.prepare('UPDATE pipeline_runs SET status = ? WHERE id = ?').run('publishing', runId);
 
-  // Publish to all platforms
-  const results = await publishPost(parsed, platformConfigs);
+  const scopedPost: PostParsed = {
+    ...parsed,
+    platforms: targetPlatforms,
+  };
 
-  // Save publish results
+  const results = await publishPost(scopedPost, platformConfigs);
+
   const insertResult = db.prepare(`
     INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -146,9 +185,22 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
   saveResults();
 
-  // Determine overall status
-  const allFailed = results.every((r) => !r.success);
-  const finalStatus = allFailed ? 'failed' : 'published';
+  const latestRows = db
+    .prepare(
+      `SELECT pr.platform, pr.status
+       FROM publish_results pr
+       WHERE pr.post_id = ?
+         AND pr.id IN (
+           SELECT MAX(inner_pr.id)
+           FROM publish_results inner_pr
+           WHERE inner_pr.post_id = ?
+           GROUP BY inner_pr.platform
+         )`
+    )
+    .all(post.id, post.id) as Array<{ platform: PlatformType; status: 'success' | 'failed' }>;
+
+  const allLatestFailed = latestRows.length > 0 && latestRows.every((row) => row.status === 'failed');
+  const finalStatus = allLatestFailed ? 'failed' : 'published';
 
   db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), post.id);
   db.prepare('UPDATE pipeline_runs SET status = ? WHERE id = ?').run(finalStatus, runId);
@@ -161,6 +213,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       run: updatedRun,
       post: updatedPost,
       results,
+      retried_platforms: targetPlatforms,
     },
   });
 }

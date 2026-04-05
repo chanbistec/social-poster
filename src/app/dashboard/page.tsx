@@ -341,7 +341,7 @@ export default async function DashboardPage({
                 title: truncate(run.template_name, 60) || `Run #${run.id}`,
                 meta: [run.tenant_name, formatStatus(run.status), startedLabel(run.started_at)].filter(Boolean).join(" • "),
                 detail: run.error || "Run has been active for more than 15 minutes.",
-                href: "/pipelines",
+                href: "/pipeline-health",
                 tone: "amber",
               }))}
             />
@@ -354,7 +354,7 @@ export default async function DashboardPage({
                 title: truncate(run.template_name, 60) || `Run #${run.id}`,
                 meta: [run.tenant_name, finishedLabel(run.completed_at || run.created_at)].filter(Boolean).join(" • "),
                 detail: run.error || "Run failed without an error message.",
-                href: "/pipelines",
+                href: "/pipeline-health",
                 tone: "red",
               }))}
             />
