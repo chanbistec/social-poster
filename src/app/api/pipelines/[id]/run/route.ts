@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/route-auth';
 import { createPipelineRun, startPipelineRunInBackground, type RunInput } from '@/lib/pipeline/runner';
 import db from '@/lib/db';
+import type { PipelineTemplate } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid template ID' }, { status: 400 });
   }
 
-  const template = db.prepare('SELECT id FROM pipeline_templates WHERE id = ?').get(templateId);
+  const template = db.prepare('SELECT id, type FROM pipeline_templates WHERE id = ?').get(templateId) as Pick<PipelineTemplate, 'id' | 'type'> | undefined;
   if (!template) {
     return NextResponse.json({ error: 'Pipeline template not found' }, { status: 404 });
   }
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { title, tip, category, hashtags, highlight } = body;
+  const { title, tip, category, hashtags, highlight, media_path } = body;
 
   if (!title || typeof title !== 'string' || !title.trim()) {
     return NextResponse.json({ error: 'title is required' }, { status: 400 });
@@ -41,6 +42,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (!category || typeof category !== 'string' || !category.trim()) {
     return NextResponse.json({ error: 'category is required' }, { status: 400 });
   }
+  if (template.type === 'custom' && (!media_path || typeof media_path !== 'string' || !media_path.trim())) {
+    return NextResponse.json({ error: 'media_path is required for this pipeline' }, { status: 400 });
+  }
 
   const input: RunInput = {
     title: title.trim(),
@@ -48,6 +52,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     category: category.trim(),
     hashtags: Array.isArray(hashtags) ? hashtags : undefined,
     highlight: typeof highlight === 'string' ? highlight.trim() || undefined : undefined,
+    mediaPath: typeof media_path === 'string' ? media_path.trim() || undefined : undefined,
   };
 
   const runId = createPipelineRun(templateId, input);

@@ -1,4 +1,8 @@
-import { publishToYouTube, type YouTubeCredentials } from './youtube';
+import {
+  publishToYouTube,
+  ensurePlaylistAndAddVideo,
+  type YouTubeCredentials,
+} from './youtube';
 import {
   publishPhotoToInstagram,
   publishReelToInstagram,
@@ -56,7 +60,6 @@ async function publishToPlatform(
   tags: string[],
   options: { privacy?: 'public' | 'private' | 'unlisted'; media_base_url?: string }
 ): Promise<PublishResult> {
-  // Use the first media file for publishing
   const mediaPath = mediaPaths[0];
   if (!mediaPath) {
     return { platform, success: false, error: 'No media file provided' };
@@ -75,7 +78,7 @@ async function publishToPlatform(
         mediaPath,
         caption,
         tags,
-        options.privacy ?? 'private'
+        options.privacy ?? 'private',
       );
       return { platform, ...result };
     }
@@ -83,7 +86,6 @@ async function publishToPlatform(
     case 'instagram': {
       const creds = credentials as InstagramCredentials;
 
-      // Instagram requires publicly accessible URLs
       if (!options.media_base_url) {
         return {
           platform,
@@ -92,8 +94,6 @@ async function publishToPlatform(
         };
       }
 
-      // Convert absolute path to relative URL path
-      // e.g. /home/.../social-poster/data/pipeline-runs/6/reel.mp4 → pipeline-runs/6/reel.mp4
       let relativePath = mediaPath;
       const dataPrefix = process.cwd() + '/data/';
       if (relativePath.startsWith(dataPrefix)) {
@@ -130,13 +130,6 @@ async function publishToPlatform(
   }
 }
 
-/**
- * Publish a post to all configured platforms in parallel.
- *
- * @param post - The parsed post object
- * @param platformConfigs - Array of platform configurations with credentials
- * @returns Array of publish results, one per platform
- */
 export async function publishPost(
   post: PostParsed,
   platformConfigs: PlatformConfig[]
@@ -166,8 +159,13 @@ export async function publishPost(
   });
 }
 
-// Re-export types and individual publishers for direct use
-export { publishToYouTube, type YouTubeCredentials, type YouTubePublishResult } from './youtube';
+export {
+  publishToYouTube,
+  ensurePlaylistAndAddVideo,
+  type YouTubeCredentials,
+  type YouTubePublishResult,
+  type YouTubePublishOptions,
+} from './youtube';
 export {
   publishPhotoToInstagram,
   publishReelToInstagram,

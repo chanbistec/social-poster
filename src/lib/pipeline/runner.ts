@@ -5,12 +5,21 @@ import { generateScenes } from './scenes';
 import { renderVideo } from './video';
 import { renderSocialImage } from './social-image';
 import db from '@/lib/db';
+import { decrypt, encrypt } from '@/lib/crypto';
+import { getMediaPath } from '@/lib/media';
+import { ensureFreshToken } from '@/lib/token-refresh';
+import {
+  ensurePlaylistAndAddVideo,
+  publishToYouTube,
+  type YouTubeCredentials,
+} from '@/lib/publishers';
 import type {
   PipelineTemplate,
   TenantBranding,
   TtsConfig,
   ImagenConfig,
   VideoConfig,
+  Platform,
 } from '@/lib/types';
 
 export interface RunInput {
@@ -19,6 +28,7 @@ export interface RunInput {
   category: string;
   hashtags?: string[];
   highlight?: string;
+  mediaPath?: string;
 }
 
 export interface RunResult {
@@ -30,8 +40,7 @@ export interface RunResult {
 }
 
 type PipelineStepState = 'pending' | 'running' | 'completed' | 'failed';
-
-type PipelineStepKey = 'narration' | 'scenes' | 'video' | 'socialImage' | 'finalize';
+type PipelineStepKey = string;
 
 export interface PipelineStepResult {
   key: PipelineStepKey;
@@ -45,7 +54,7 @@ export interface PipelineStepResult {
   result?: unknown;
 }
 
-const STEP_META: Record<PipelineStepKey, { label: string; description: string }> = {
+const STEP_META: Record<string, { label: string; description: string }> = {
   narration: {
     label: 'Narration',
     description: 'Generate voice-over audio for the script.',
@@ -62,6 +71,14 @@ const STEP_META: Record<PipelineStepKey, { label: string; description: string }>
     label: 'Social Image',
     description: 'Render the square social image output.',
   },
+  uploadVideo: {
+    label: 'Upload Video',
+    description: 'Upload the academy video to YouTube.',
+  },
+  playlistAdd: {
+    label: 'Playlist',
+    description: 'Create or update the destination YouTube playlist.',
+  },
   finalize: {
     label: 'Finalize',
     description: 'Save outputs and prepare the run for review.',
@@ -75,6 +92,21 @@ function parseJson<T>(raw: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function titleCase(value: string) {
+  return value
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/[-_]/g, ' ')
+    .replace(/^./, (char) => char.toUpperCase())
+    .trim();
+}
+
+function getStepMeta(key: string) {
+  return STEP_META[key] ?? {
+    label: titleCase(key),
+    description: `Run ${titleCase(key).toLowerCase()} step.`,
+  };
 }
 
 function mergeBranding(
@@ -106,6 +138,7 @@ function updateRunStatus(
     error?: string | null;
     completed_at?: string | null;
     started_at?: string | null;
+    post_id?: number | null;
   },
 ) {
   const fields = ['status = ?'];
@@ -131,6 +164,10 @@ function updateRunStatus(
     fields.push('started_at = ?');
     values.push(extra.started_at);
   }
+  if (extra?.post_id !== undefined) {
+    fields.push('post_id = ?');
+    values.push(extra.post_id);
+  }
 
   values.push(runId);
   db.prepare(`UPDATE pipeline_runs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
@@ -143,6 +180,8 @@ function getStepOrder(templateType: PipelineTemplate['type']): PipelineStepKey[]
     case 'short':
     case 'reel':
       return ['narration', 'scenes', 'video', 'finalize'];
+    case 'custom':
+      return ['uploadVideo', 'playlistAdd', 'finalize'];
     default:
       return ['narration', 'scenes', 'video', 'finalize'];
   }
@@ -151,15 +190,18 @@ function getStepOrder(templateType: PipelineTemplate['type']): PipelineStepKey[]
 function createInitialStepResults(templateType: PipelineTemplate['type']) {
   const orderedKeys = getStepOrder(templateType);
   return Object.fromEntries(
-    orderedKeys.map((key) => [
-      key,
-      {
+    orderedKeys.map((key) => {
+      const meta = getStepMeta(key);
+      return [
         key,
-        label: STEP_META[key].label,
-        description: STEP_META[key].description,
-        state: 'pending',
-      } satisfies PipelineStepResult,
-    ]),
+        {
+          key,
+          label: meta.label,
+          description: meta.description,
+          state: 'pending',
+        } satisfies PipelineStepResult,
+      ];
+    }),
   ) as Record<PipelineStepKey, PipelineStepResult>;
 }
 
@@ -173,7 +215,7 @@ function setStepRunning(runId: number, stepResults: Record<PipelineStepKey, Pipe
   stepResults[key] = {
     ...stepResults[key],
     state: 'running',
-    startedAt: stepResults[key].startedAt ?? new Date().toISOString(),
+    startedAt: stepResults[key]?.startedAt ?? new Date().toISOString(),
     completedAt: undefined,
     error: undefined,
   };
@@ -229,6 +271,54 @@ function summarizeVideo(result: { duration: number }) {
 
 function summarizeSocialImage(result: { width: number; height: number }) {
   return `${result.width}×${result.height} social image ready`;
+}
+
+function buildCaption(input: RunInput) {
+  const parts = [input.title.trim(), input.tip.trim()];
+  if (input.hashtags?.length) {
+    parts.push(input.hashtags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)).join(' '));
+  }
+  return parts.filter(Boolean).join('\n\n').trim();
+}
+
+function createApprovedPost(template: PipelineTemplate, input: RunInput, outputPaths: string[]) {
+  const now = new Date().toISOString();
+  const caption = buildCaption(input);
+  const platforms = parseJson<string[]>(template.platforms, []);
+
+  const result = db.prepare(`
+    INSERT INTO posts (tenant_id, status, caption, hashtags, media_paths, platforms, approved_at, approved_by, created_at, updated_at)
+    VALUES (?, 'approved', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    template.tenant_id,
+    caption,
+    JSON.stringify(input.hashtags ?? []),
+    JSON.stringify(outputPaths),
+    JSON.stringify(platforms),
+    now,
+    'pipeline',
+    now,
+    now,
+  );
+
+  return Number(result.lastInsertRowid);
+}
+
+function getYouTubePlatform(template: PipelineTemplate) {
+  const platform = db
+    .prepare(`SELECT * FROM platforms WHERE tenant_id = ? AND type = 'youtube' AND enabled = 1 LIMIT 1`)
+    .get(template.tenant_id) as Platform | undefined;
+
+  if (!platform) {
+    throw new Error(`No enabled YouTube platform found for tenant ${template.tenant_id}`);
+  }
+
+  return platform;
+}
+
+function getCustomStepConfig(template: PipelineTemplate, type: string) {
+  const steps = parseJson<Array<{ type?: string; config?: Record<string, unknown> }>>(template.steps, []);
+  return steps.find((step) => step.type === type)?.config ?? {};
 }
 
 export function createPipelineRun(templateId: number, input: RunInput): number {
@@ -317,6 +407,7 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
   mkdirSync(outputDir, { recursive: true });
 
   const outputPaths: string[] = [];
+  let postId: number | undefined;
 
   try {
     switch (template.type) {
@@ -492,6 +583,90 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
         break;
       }
 
+      case 'custom': {
+        if (!input.mediaPath) {
+          throw new Error('A media upload is required for this custom pipeline');
+        }
+
+        const absoluteMediaPath = getMediaPath(input.mediaPath);
+        outputPaths.push(absoluteMediaPath);
+
+        const uploadConfig = getCustomStepConfig(template, 'upload_video');
+        const playlistConfig = getCustomStepConfig(template, 'playlist_add');
+        const privacy = (uploadConfig.privacy as 'public' | 'private' | 'unlisted' | undefined) ?? 'unlisted';
+        const categoryId = typeof uploadConfig.category === 'string' ? uploadConfig.category : undefined;
+
+        const platform = getYouTubePlatform(template);
+        const freshCredentials = await ensureFreshToken(platform, decrypt, encrypt);
+        const credentials = freshCredentials as YouTubeCredentials;
+
+        postId = createApprovedPost(template, input, outputPaths);
+        updateRunStatus(runId, 'publishing', {
+          post_id: postId,
+          output_paths: JSON.stringify(outputPaths),
+          step_results: JSON.stringify(stepResults),
+          error: null,
+        });
+        db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('publishing', new Date().toISOString(), postId);
+
+        setStepRunning(runId, stepResults, 'uploadVideo');
+        const youtubeResult = await publishToYouTube(
+          credentials,
+          absoluteMediaPath,
+          buildCaption(input),
+          input.hashtags ?? [],
+          privacy,
+          {
+            category: categoryId,
+            title: input.title,
+          },
+        );
+
+        if (!youtubeResult.success || !youtubeResult.external_id) {
+          throw new Error(youtubeResult.error || 'YouTube upload failed');
+        }
+
+        db.prepare(`
+          INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
+          VALUES (?, 'youtube', 'success', ?, ?, NULL, ?)
+        `).run(postId, youtubeResult.external_id, youtubeResult.external_url ?? null, new Date().toISOString());
+        setStepComplete(runId, stepResults, 'uploadVideo', youtubeResult, 'Video uploaded to YouTube');
+
+        if (input.category?.trim()) {
+          setStepRunning(runId, stepResults, 'playlistAdd');
+          const playlistResult = await ensurePlaylistAndAddVideo(
+            credentials,
+            input.category,
+            youtubeResult.external_id,
+            (playlistConfig.privacy as 'public' | 'private' | 'unlisted' | undefined) ?? privacy,
+          );
+          setStepComplete(
+            runId,
+            stepResults,
+            'playlistAdd',
+            playlistResult,
+            `Added to playlist ${input.category.trim()}`,
+          );
+        }
+
+        db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('published', new Date().toISOString(), postId);
+        updateRunStatus(runId, 'published', {
+          post_id: postId,
+          step_results: JSON.stringify(stepResults),
+          output_paths: JSON.stringify(outputPaths),
+          error: null,
+          completed_at: new Date().toISOString(),
+        });
+
+        return {
+          runId,
+          status: 'published',
+          outputPaths,
+          stepResults,
+          postId,
+        };
+      }
+
       default:
         throw new Error(`Unsupported pipeline type: ${template.type}`);
     }
@@ -504,18 +679,27 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
       output_paths: JSON.stringify(outputPaths),
       error: null,
       completed_at: new Date().toISOString(),
+      post_id: postId ?? null,
     });
 
-    return { runId, status: 'preview', outputPaths, stepResults };
+    return { runId, status: 'preview', outputPaths, stepResults, postId };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error(`[Pipeline] Run ${runId} failed:`, errorMsg);
 
-    const activeStep = (Object.keys(stepResults) as PipelineStepKey[]).find(
+    const activeStep = Object.keys(stepResults).find(
       (key) => stepResults[key]?.state === 'running',
     );
     if (activeStep) {
       setStepFailed(runId, stepResults, activeStep, errorMsg);
+    }
+
+    if (postId) {
+      db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('failed', new Date().toISOString(), postId);
+      db.prepare(`
+        INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
+        VALUES (?, 'youtube', 'failed', NULL, NULL, ?, NULL)
+      `).run(postId, errorMsg);
     }
 
     updateRunStatus(runId, 'failed', {
@@ -523,8 +707,9 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
       output_paths: JSON.stringify(outputPaths),
       error: errorMsg,
       completed_at: new Date().toISOString(),
+      post_id: postId ?? null,
     });
 
-    return { runId, status: 'failed', outputPaths, stepResults };
+    return { runId, status: 'failed', outputPaths, stepResults, postId };
   }
 }

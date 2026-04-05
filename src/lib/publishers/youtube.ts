@@ -18,6 +18,48 @@ export interface YouTubePublishResult {
   error?: string;
 }
 
+export interface YouTubePublishOptions {
+  privacy?: 'public' | 'private' | 'unlisted';
+  category?: string;
+  title?: string;
+  description?: string;
+}
+
+function createYouTubeClient(credentials: YouTubeCredentials) {
+  const oauth2Client = new google.auth.OAuth2(
+    credentials.client_id,
+    credentials.client_secret,
+  );
+
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+  });
+
+  oauth2Client.on('tokens', (tokens) => {
+    if (tokens.access_token) {
+      oauth2Client.setCredentials({
+        access_token: tokens.access_token,
+        refresh_token: credentials.refresh_token,
+      });
+    }
+  });
+
+  return google.youtube({ version: 'v3', auth: oauth2Client });
+}
+
+async function ensureYouTubeAccess(credentials: YouTubeCredentials) {
+  const oauth2Client = new google.auth.OAuth2(
+    credentials.client_id,
+    credentials.client_secret,
+  );
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+  });
+  await oauth2Client.getAccessToken();
+}
+
 // ── Publisher ──
 
 export async function publishToYouTube(
@@ -25,51 +67,27 @@ export async function publishToYouTube(
   media_path: string,
   caption: string,
   tags: string[],
-  privacy: 'public' | 'private' | 'unlisted' = 'private'
+  privacy: 'public' | 'private' | 'unlisted' = 'private',
+  options: Omit<YouTubePublishOptions, 'privacy'> = {},
 ): Promise<YouTubePublishResult> {
   try {
-    // Verify file exists
     try {
       await stat(media_path);
     } catch {
       return { success: false, error: `Media file not found: ${media_path}` };
     }
 
-    // Set up OAuth2 client with token refresh
-    const oauth2Client = new google.auth.OAuth2(
-      credentials.client_id,
-      credentials.client_secret
-    );
-
-    oauth2Client.setCredentials({
-      access_token: credentials.access_token,
-      refresh_token: credentials.refresh_token,
-    });
-
-    // Auto-refresh token if expired
-    oauth2Client.on('tokens', (tokens) => {
-      if (tokens.access_token) {
-        oauth2Client.setCredentials({
-          access_token: tokens.access_token,
-          refresh_token: credentials.refresh_token,
-        });
-      }
-    });
-
-    // Force a token refresh to ensure we have a valid token
     try {
-      await oauth2Client.getAccessToken();
+      await ensureYouTubeAccess(credentials);
     } catch {
       return { success: false, error: 'Failed to refresh YouTube access token. Re-authentication may be required.' };
     }
 
-    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+    const youtube = createYouTubeClient(credentials);
 
-    // Extract title from caption (first line or first 100 chars)
-    const title = caption.split('\n')[0].slice(0, 100) || 'Untitled';
-    const description = caption;
+    const title = options.title?.trim() || caption.split('\n')[0].slice(0, 100) || 'Untitled';
+    const description = options.description ?? caption;
 
-    // Pre-flight quota check — a lightweight call to verify API access
     try {
       await youtube.channels.list({ part: ['id'], mine: true });
     } catch (quotaErr: unknown) {
@@ -77,10 +95,8 @@ export async function publishToYouTube(
       if (msg.includes('quota') || msg.includes('exceeded') || msg.includes('rateLimitExceeded')) {
         return { success: false, error: `YouTube API quota exceeded. Try again tomorrow. (${msg})` };
       }
-      // Other errors (e.g. auth) — let the upload attempt handle it
     }
 
-    // Upload video via resumable upload
     const response = await youtube.videos.insert({
       part: ['snippet', 'status'],
       requestBody: {
@@ -88,6 +104,7 @@ export async function publishToYouTube(
           title,
           description,
           tags,
+          categoryId: options.category,
         },
         status: {
           privacyStatus: privacy,
@@ -113,4 +130,71 @@ export async function publishToYouTube(
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `YouTube upload failed: ${message}` };
   }
+}
+
+export async function ensurePlaylistAndAddVideo(
+  credentials: YouTubeCredentials,
+  playlistTitle: string,
+  videoId: string,
+  privacy: 'public' | 'private' | 'unlisted' = 'private',
+): Promise<{ playlistId: string; playlistUrl: string; itemId?: string }> {
+  await ensureYouTubeAccess(credentials);
+  const youtube = createYouTubeClient(credentials);
+
+  const trimmedTitle = playlistTitle.trim();
+  if (!trimmedTitle) {
+    throw new Error('Playlist title is required');
+  }
+
+  const existing = await youtube.playlists.list({
+    part: ['id', 'snippet'],
+    mine: true,
+    maxResults: 50,
+  });
+
+  const matched = existing.data.items?.find(
+    (item) => item.snippet?.title?.trim().toLowerCase() === trimmedTitle.toLowerCase(),
+  );
+
+  let playlistId = matched?.id;
+
+  if (!playlistId) {
+    const created = await youtube.playlists.insert({
+      part: ['snippet', 'status'],
+      requestBody: {
+        snippet: {
+          title: trimmedTitle,
+          description: `Auto-created by Social Poster for ${trimmedTitle}`,
+        },
+        status: {
+          privacyStatus: privacy,
+        },
+      },
+    });
+
+    playlistId = created.data.id ?? undefined;
+  }
+
+  if (!playlistId) {
+    throw new Error('Failed to resolve or create YouTube playlist');
+  }
+
+  const inserted = await youtube.playlistItems.insert({
+    part: ['snippet'],
+    requestBody: {
+      snippet: {
+        playlistId,
+        resourceId: {
+          kind: 'youtube#video',
+          videoId,
+        },
+      },
+    },
+  });
+
+  return {
+    playlistId,
+    playlistUrl: `https://www.youtube.com/playlist?list=${playlistId}`,
+    itemId: inserted.data.id ?? undefined,
+  };
 }

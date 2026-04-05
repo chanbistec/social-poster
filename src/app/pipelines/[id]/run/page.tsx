@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
+import MediaUpload from "@/components/media-upload";
 
 const CATEGORIES = [
   "sleep",
@@ -20,6 +21,7 @@ interface TemplateInfo {
   id: number;
   name: string;
   type: string;
+  tenant_id: string;
 }
 
 export default function PipelineRunPage() {
@@ -32,12 +34,14 @@ export default function PipelineRunPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Form fields
   const [title, setTitle] = useState("");
   const [tip, setTip] = useState("");
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>(CATEGORIES[0]);
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number] | string>(CATEGORIES[0]);
   const [hashtags, setHashtags] = useState("");
   const [highlight, setHighlight] = useState("");
+  const [mediaPath, setMediaPath] = useState<string | null>(null);
+
+  const isCustom = template?.type === "custom";
 
   useEffect(() => {
     fetch(`/api/pipelines/${id}`)
@@ -53,6 +57,10 @@ export default function PipelineRunPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !tip.trim()) return;
+    if (isCustom && !mediaPath) {
+      setError("Upload a video before starting this pipeline");
+      return;
+    }
 
     setSubmitting(true);
     setError(null);
@@ -64,12 +72,13 @@ export default function PipelineRunPage() {
         body: JSON.stringify({
           title: title.trim(),
           tip: tip.trim(),
-          category,
+          category: category.trim(),
           hashtags: hashtags
             .split(",")
             .map((h) => h.trim())
             .filter(Boolean),
           highlight: highlight.trim() || undefined,
+          media_path: mediaPath || undefined,
         }),
       });
 
@@ -106,7 +115,6 @@ export default function PipelineRunPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-semibold">Run Pipeline</h1>
         <p className="mt-1 text-sm text-zinc-400">
@@ -117,65 +125,66 @@ export default function PipelineRunPage() {
         </p>
       </div>
 
-      {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-5 space-y-4">
-          {/* Title */}
           <div>
             <label className="mb-1 block text-sm font-medium text-zinc-300">
-              Title <span className="text-red-400">*</span>
+              {isCustom ? "Video Title" : "Title"} <span className="text-red-400">*</span>
             </label>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               required
-              placeholder="e.g. Morning Hydration Tip"
+              placeholder={isCustom ? "e.g. Leadership Lesson 01" : "e.g. Morning Hydration Tip"}
               className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
             />
           </div>
 
-          {/* Tip / Content */}
           <div>
             <label className="mb-1 block text-sm font-medium text-zinc-300">
-              Tip / Content <span className="text-red-400">*</span>
+              {isCustom ? "Description" : "Tip / Content"} <span className="text-red-400">*</span>
             </label>
             <textarea
               value={tip}
               onChange={(e) => setTip(e.target.value)}
               required
               rows={4}
-              placeholder="Write the main content or tip here..."
+              placeholder={isCustom ? "Write the YouTube description or lesson summary..." : "Write the main content or tip here..."}
               className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 resize-y"
             />
-            <p className="mt-1 text-right text-xs text-zinc-500">
-              {tip.length} characters
-            </p>
+            <p className="mt-1 text-right text-xs text-zinc-500">{tip.length} characters</p>
           </div>
 
-          {/* Category */}
           <div>
             <label className="mb-1 block text-sm font-medium text-zinc-300">
-              Category
+              {isCustom ? "Playlist / Series" : "Category"}
             </label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])}
-              className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-                </option>
-              ))}
-            </select>
+            {isCustom ? (
+              <input
+                type="text"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="e.g. HR Masterclass"
+                className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+            ) : (
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])}
+                className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
-          {/* Hashtags */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-zinc-300">
-              Hashtags
-            </label>
+            <label className="mb-1 block text-sm font-medium text-zinc-300">Hashtags</label>
             <input
               type="text"
               value={hashtags}
@@ -185,45 +194,68 @@ export default function PipelineRunPage() {
             />
           </div>
 
-          {/* Highlight Word */}
-          <div>
-            <label className="mb-1 block text-sm font-medium text-zinc-300">
-              Highlight Word{" "}
-              <span className="text-xs text-zinc-500">(optional)</span>
-            </label>
-            <input
-              type="text"
-              value={highlight}
-              onChange={(e) => setHighlight(e.target.value)}
-              placeholder="Word to emphasize in visuals"
-              className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
-            />
-          </div>
+          {!isCustom && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-zinc-300">
+                Highlight Word <span className="text-xs text-zinc-500">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={highlight}
+                onChange={(e) => setHighlight(e.target.value)}
+                placeholder="Word to emphasize in visuals"
+                className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+            </div>
+          )}
+
+          {isCustom && template.tenant_id ? (
+            <div className="space-y-2 rounded-lg border border-white/10 bg-zinc-950/40 p-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-zinc-300">
+                  Academy Video <span className="text-red-400">*</span>
+                </label>
+                <MediaUpload
+                  tenantId={template.tenant_id}
+                  accept="video/mp4,video/quicktime,video/webm"
+                  onUploaded={(paths) => setMediaPath(paths[0] ?? null)}
+                />
+              </div>
+              <p className="text-xs text-zinc-500">
+                Upload a finished MP4/MOV/WebM file. The pipeline will publish it to YouTube and place it into the selected playlist.
+              </p>
+              {mediaPath ? (
+                <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+                  Ready: {mediaPath}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        {/* Error */}
         {error && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
             {error}
           </div>
         )}
 
-        {/* Submit */}
         {submitting ? (
           <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-4 text-center">
             <div className="mb-2 flex justify-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
             </div>
-            <p className="text-sm font-medium text-orange-300">Starting pipeline run...</p>
+            <p className="text-sm font-medium text-orange-300">
+              {isCustom ? "Starting upload pipeline..." : "Starting pipeline run..."}
+            </p>
             <p className="mt-1 text-xs text-orange-200/80">You’ll be redirected to the live progress page in a moment.</p>
           </div>
         ) : (
           <button
             type="submit"
-            disabled={!title.trim() || !tip.trim()}
+            disabled={!title.trim() || !tip.trim() || !String(category).trim() || (isCustom && !mediaPath)}
             className="w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           >
-            Generate Content
+            {isCustom ? "Upload to Academy" : "Generate Content"}
           </button>
         )}
       </form>
