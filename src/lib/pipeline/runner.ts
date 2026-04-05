@@ -11,12 +11,7 @@ import type {
   TtsConfig,
   ImagenConfig,
   VideoConfig,
-  PlatformType,
 } from '@/lib/types';
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 export interface RunInput {
   title: string;
@@ -34,9 +29,44 @@ export interface RunResult {
   postId?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+type PipelineStepState = 'pending' | 'running' | 'completed' | 'failed';
+
+type PipelineStepKey = 'narration' | 'scenes' | 'video' | 'socialImage' | 'finalize';
+
+export interface PipelineStepResult {
+  key: PipelineStepKey;
+  label: string;
+  description: string;
+  state: PipelineStepState;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  summary?: string;
+  result?: unknown;
+}
+
+const STEP_META: Record<PipelineStepKey, { label: string; description: string }> = {
+  narration: {
+    label: 'Narration',
+    description: 'Generate voice-over audio for the script.',
+  },
+  scenes: {
+    label: 'Scenes',
+    description: 'Create or select the visuals for the run.',
+  },
+  video: {
+    label: 'Video',
+    description: 'Render the final video output.',
+  },
+  socialImage: {
+    label: 'Social Image',
+    description: 'Render the square social image output.',
+  },
+  finalize: {
+    label: 'Finalize',
+    description: 'Save outputs and prepare the run for review.',
+  },
+};
 
 function parseJson<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -64,7 +94,6 @@ function mergeBranding(
     backgrounds: parseJson(tenantBranding.backgrounds, {}),
   };
 
-  // Template branding overrides tenant defaults
   return { ...base, ...templateBranding };
 }
 
@@ -74,8 +103,9 @@ function updateRunStatus(
   extra?: {
     step_results?: string;
     output_paths?: string;
-    error?: string;
-    completed_at?: string;
+    error?: string | null;
+    completed_at?: string | null;
+    started_at?: string | null;
   },
 ) {
   const fields = ['status = ?'];
@@ -97,72 +127,210 @@ function updateRunStatus(
     fields.push('completed_at = ?');
     values.push(extra.completed_at);
   }
+  if (extra?.started_at !== undefined) {
+    fields.push('started_at = ?');
+    values.push(extra.started_at);
+  }
 
   values.push(runId);
   db.prepare(`UPDATE pipeline_runs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline execution
-// ---------------------------------------------------------------------------
+function getStepOrder(templateType: PipelineTemplate['type']): PipelineStepKey[] {
+  switch (templateType) {
+    case 'social_image':
+      return ['scenes', 'socialImage', 'finalize'];
+    case 'short':
+    case 'reel':
+      return ['narration', 'scenes', 'video', 'finalize'];
+    default:
+      return ['narration', 'scenes', 'video', 'finalize'];
+  }
+}
 
-export async function executePipeline(
-  templateId: number,
-  input: RunInput,
-): Promise<RunResult> {
-  // 1. Load template
+function createInitialStepResults(templateType: PipelineTemplate['type']) {
+  const orderedKeys = getStepOrder(templateType);
+  return Object.fromEntries(
+    orderedKeys.map((key) => [
+      key,
+      {
+        key,
+        label: STEP_META[key].label,
+        description: STEP_META[key].description,
+        state: 'pending',
+      } satisfies PipelineStepResult,
+    ]),
+  ) as Record<PipelineStepKey, PipelineStepResult>;
+}
+
+function persistStepResults(runId: number, stepResults: Record<string, unknown>) {
+  updateRunStatus(runId, 'generating', {
+    step_results: JSON.stringify(stepResults),
+  });
+}
+
+function setStepRunning(runId: number, stepResults: Record<PipelineStepKey, PipelineStepResult>, key: PipelineStepKey) {
+  stepResults[key] = {
+    ...stepResults[key],
+    state: 'running',
+    startedAt: stepResults[key].startedAt ?? new Date().toISOString(),
+    completedAt: undefined,
+    error: undefined,
+  };
+  persistStepResults(runId, stepResults);
+}
+
+function setStepComplete(
+  runId: number,
+  stepResults: Record<PipelineStepKey, PipelineStepResult>,
+  key: PipelineStepKey,
+  result: unknown,
+  summary?: string,
+) {
+  stepResults[key] = {
+    ...stepResults[key],
+    state: 'completed',
+    completedAt: new Date().toISOString(),
+    result,
+    summary,
+    error: undefined,
+  };
+  persistStepResults(runId, stepResults);
+}
+
+function setStepFailed(
+  runId: number,
+  stepResults: Record<PipelineStepKey, PipelineStepResult>,
+  key: PipelineStepKey,
+  error: string,
+) {
+  stepResults[key] = {
+    ...stepResults[key],
+    state: 'failed',
+    completedAt: new Date().toISOString(),
+    error,
+  };
+  persistStepResults(runId, stepResults);
+}
+
+function summarizeNarration(result: { duration: number }) {
+  return `${result.duration.toFixed(1)}s voice-over ready`;
+}
+
+function summarizeScenes(result: { imagePaths?: string[]; source?: string }) {
+  const count = result.imagePaths?.length ?? 0;
+  const source = result.source === 'fallback' ? 'fallback art' : 'generated art';
+  return `${count} ${count === 1 ? 'scene' : 'scenes'} prepared via ${source}`;
+}
+
+function summarizeVideo(result: { duration: number }) {
+  return `${result.duration.toFixed(1)}s video rendered`;
+}
+
+function summarizeSocialImage(result: { width: number; height: number }) {
+  return `${result.width}×${result.height} social image ready`;
+}
+
+export function createPipelineRun(templateId: number, input: RunInput): number {
   const template = db
-    .prepare('SELECT * FROM pipeline_templates WHERE id = ?')
-    .get(templateId) as PipelineTemplate | undefined;
+    .prepare('SELECT id, type FROM pipeline_templates WHERE id = ?')
+    .get(templateId) as Pick<PipelineTemplate, 'id' | 'type'> | undefined;
 
   if (!template) {
     throw new Error(`Pipeline template not found: ${templateId}`);
   }
 
-  // 2. Parse JSON config fields
+  const now = new Date().toISOString();
+  const stepResults = createInitialStepResults(template.type);
+  const result = db
+    .prepare(
+      `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, started_at, created_at)
+       VALUES (?, 'generating', ?, ?, ?, ?)`,
+    )
+    .run(templateId, JSON.stringify(input), JSON.stringify(stepResults), now, now);
+
+  return Number(result.lastInsertRowid);
+}
+
+export function startPipelineRunInBackground(runId: number) {
+  setImmediate(() => {
+    void continuePipelineRun(runId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Pipeline] Background run ${runId} crashed:`, error);
+      updateRunStatus(runId, 'failed', {
+        error: message,
+        completed_at: new Date().toISOString(),
+      });
+    });
+  });
+}
+
+export async function executePipeline(
+  templateId: number,
+  input: RunInput,
+): Promise<RunResult> {
+  const runId = createPipelineRun(templateId, input);
+  return continuePipelineRun(runId);
+}
+
+export async function continuePipelineRun(runId: number): Promise<RunResult> {
+  const run = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId) as {
+    id: number;
+    template_id: number;
+    input_params: string;
+    step_results: string | null;
+  } | undefined;
+
+  if (!run) {
+    throw new Error(`Pipeline run not found: ${runId}`);
+  }
+
+  const template = db
+    .prepare('SELECT * FROM pipeline_templates WHERE id = ?')
+    .get(run.template_id) as PipelineTemplate | undefined;
+
+  if (!template) {
+    throw new Error(`Pipeline template not found: ${run.template_id}`);
+  }
+
+  const input = parseJson<RunInput>(run.input_params, {
+    title: '',
+    tip: '',
+    category: '',
+  });
+
   const ttsConfig = parseJson<TtsConfig | null>(template.tts_config, null);
   const imagenConfig = parseJson<ImagenConfig | null>(template.imagen_config, null);
   const videoConfig = parseJson<VideoConfig | null>(template.video_config, null);
   const templateBranding = parseJson<Record<string, unknown>>(template.branding, {});
-
-  // Load tenant branding and merge
   const tenantBranding = db
     .prepare('SELECT * FROM tenant_branding WHERE tenant_id = ?')
     .get(template.tenant_id) as TenantBranding | undefined;
   const branding = mergeBranding(tenantBranding, templateBranding);
 
-  // 3. Create pipeline_run row
-  const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `INSERT INTO pipeline_runs (template_id, status, input_params, started_at, created_at)
-       VALUES (?, 'generating', ?, ?, ?)`,
-    )
-    .run(templateId, JSON.stringify(input), now, now);
+  const stepResults = {
+    ...createInitialStepResults(template.type),
+    ...parseJson<Record<PipelineStepKey, PipelineStepResult> | null>(run.step_results, null),
+  } as Record<PipelineStepKey, PipelineStepResult>;
 
-  const runId = Number(result.lastInsertRowid);
-
-  // 4. Create output directory
   const outputDir = join(process.cwd(), 'data', 'pipeline-runs', String(runId));
   mkdirSync(outputDir, { recursive: true });
 
-  // 5. Execute steps based on template type
-  const stepResults: Record<string, unknown> = {};
   const outputPaths: string[] = [];
 
   try {
     switch (template.type) {
       case 'reel': {
-        // a. Narration
+        setStepRunning(runId, stepResults, 'narration');
         const narration = await generateNarration({
           text: input.tip,
           model: ttsConfig?.voice ?? undefined,
           lengthScale: ttsConfig?.speed ?? undefined,
           outputDir,
         });
-        stepResults.narration = narration;
+        setStepComplete(runId, stepResults, 'narration', narration, summarizeNarration(narration));
 
-        // b. Scenes (AI-generated)
+        setStepRunning(runId, stepResults, 'scenes');
         const scenes = await generateScenes({
           tipText: input.tip,
           tipTitle: input.title,
@@ -173,9 +341,8 @@ export async function executePipeline(
           aspectRatio: imagenConfig?.aspect_ratio ?? '9:16',
           backgroundsDir: (branding.backgrounds as Record<string, string>)?.dir ?? undefined,
         });
-        stepResults.scenes = scenes;
+        setStepComplete(runId, stepResults, 'scenes', scenes, summarizeScenes(scenes));
 
-        // c. Render video — map branding/timing/audio to what video-render.py expects
         const cwd = process.cwd();
         const resolvePath = (p: unknown) => {
           if (!p || typeof p !== 'string') return undefined;
@@ -183,8 +350,7 @@ export async function executePipeline(
           return join(cwd, p);
         };
 
-        // Extract timing from videoConfig structure
-        const vcObj = videoConfig as Record<string, unknown> ?? {};
+        const vcObj = (videoConfig as Record<string, unknown> | null) ?? {};
         const structure = (vcObj.structure ?? {}) as Record<string, unknown>;
         const introStruct = (structure.intro ?? {}) as Record<string, unknown>;
         const outroStruct = (structure.outro ?? {}) as Record<string, unknown>;
@@ -192,9 +358,9 @@ export async function executePipeline(
         const timingObj = (vcObj.timing ?? {}) as Record<string, unknown>;
         const audioObj = (vcObj.audio ?? {}) as Record<string, unknown>;
 
-        // Resolve font path
         const fontsObj = branding.fonts as Record<string, string> | undefined;
-        const fontPath = fontsObj?.heading ?? fontsObj?.body ?? (branding as Record<string, unknown>).font as string | undefined;
+        const fontPath =
+          fontsObj?.heading ?? fontsObj?.body ?? (branding as Record<string, unknown>).font as string | undefined;
 
         const videoBranding = {
           logoPath: resolvePath(branding.logo_path),
@@ -215,7 +381,7 @@ export async function executePipeline(
 
         const videoAudio = {
           bgmPath: resolvePath(branding.bgm_path) ?? resolvePath(audioObj.bgm),
-          bgmVolume: (audioObj.bgm_volume as number) ?? 0.20,
+          bgmVolume: (audioObj.bgm_volume as number) ?? 0.2,
           voiceVolume: (audioObj.voice_volume as number) ?? 1.0,
           bgmFadeIn: (audioObj.bgm_fade_in as number) ?? 1.5,
           bgmFadeOut: (audioObj.bgm_fade_out as number) ?? 2.0,
@@ -223,6 +389,7 @@ export async function executePipeline(
 
         const kenBurns = (scenesStruct.ken_burns_styles as string[]) ?? ['zoom_in', 'slow_pan', 'zoom_out'];
 
+        setStepRunning(runId, stepResults, 'video');
         const video = await renderVideo({
           scenes: scenes.imagePaths,
           narration: { wavPath: narration.wavPath, duration: narration.duration },
@@ -234,33 +401,35 @@ export async function executePipeline(
           tipText: input.tip,
           outputDir,
         });
-        stepResults.video = video;
         outputPaths.push(video.videoPath);
+        setStepComplete(runId, stepResults, 'video', video, summarizeVideo(video));
         break;
       }
 
       case 'short': {
-        // a. Narration
+        setStepRunning(runId, stepResults, 'narration');
         const narration = await generateNarration({
           text: input.tip,
           model: ttsConfig?.voice ?? undefined,
           lengthScale: ttsConfig?.speed ?? undefined,
           outputDir,
         });
-        stepResults.narration = narration;
+        setStepComplete(runId, stepResults, 'narration', narration, summarizeNarration(narration));
 
-        // b. Use category background (no AI scene generation)
-        const backgroundsMap = parseJson<Record<string, string>>(
-          tenantBranding?.backgrounds ?? '{}',
-          {},
-        );
-        const bgPath = backgroundsMap[input.category] ?? backgroundsMap['default'] ?? '';
+        setStepRunning(runId, stepResults, 'scenes');
+        const backgroundsMap = parseJson<Record<string, string>>(tenantBranding?.backgrounds ?? '{}', {});
+        const bgPath = backgroundsMap[input.category] ?? backgroundsMap.default ?? '';
 
+        let scenesResult: { imagePaths: string[]; prompts: string[]; source: 'imagen' | 'fallback' } | undefined;
         const scenePaths: string[] = [];
         if (bgPath && existsSync(bgPath)) {
           scenePaths.push(bgPath);
+          scenesResult = {
+            imagePaths: [bgPath],
+            prompts: [],
+            source: 'fallback',
+          };
         } else {
-          // Fallback: generate a single scene
           const scenes = await generateScenes({
             tipText: input.tip,
             tipTitle: input.title,
@@ -270,10 +439,11 @@ export async function executePipeline(
             outputDir,
           });
           scenePaths.push(...scenes.imagePaths);
-          stepResults.scenes = scenes;
+          scenesResult = scenes;
         }
+        setStepComplete(runId, stepResults, 'scenes', scenesResult, summarizeScenes(scenesResult));
 
-        // c. Render video with single scene
+        setStepRunning(runId, stepResults, 'video');
         const video = await renderVideo({
           scenes: scenePaths,
           narration: { wavPath: narration.wavPath, duration: narration.duration },
@@ -284,13 +454,13 @@ export async function executePipeline(
           },
           outputDir,
         });
-        stepResults.video = video;
         outputPaths.push(video.videoPath);
+        setStepComplete(runId, stepResults, 'video', video, summarizeVideo(video));
         break;
       }
 
       case 'social_image': {
-        // a. Generate 1 scene with 1:1 aspect ratio
+        setStepRunning(runId, stepResults, 'scenes');
         const scenes = await generateScenes({
           tipText: input.tip,
           tipTitle: input.title,
@@ -299,9 +469,8 @@ export async function executePipeline(
           aspectRatio: '1:1',
           outputDir,
         });
-        stepResults.scenes = scenes;
+        setStepComplete(runId, stepResults, 'scenes', scenes, summarizeScenes(scenes));
 
-        // b. Render social image
         const brandingConfigStr = JSON.stringify({
           ...parseJson(tenantBranding?.colors ?? '{}', {}),
           ...parseJson(tenantBranding?.fonts ?? '{}', {}),
@@ -309,6 +478,7 @@ export async function executePipeline(
           watermark: branding.watermark,
         });
 
+        setStepRunning(runId, stepResults, 'socialImage');
         const image = await renderSocialImage({
           backgroundPath: scenes.imagePaths[0],
           title: input.title,
@@ -317,8 +487,8 @@ export async function executePipeline(
           logoPath: (branding.logo_path as string) ?? undefined,
           outputDir,
         });
-        stepResults.socialImage = image;
         outputPaths.push(image.imagePath);
+        setStepComplete(runId, stepResults, 'socialImage', image, summarizeSocialImage(image));
         break;
       }
 
@@ -326,10 +496,13 @@ export async function executePipeline(
         throw new Error(`Unsupported pipeline type: ${template.type}`);
     }
 
-    // 6. Update run as preview
+    setStepRunning(runId, stepResults, 'finalize');
+    setStepComplete(runId, stepResults, 'finalize', { outputPaths }, `${outputPaths.length} output file${outputPaths.length === 1 ? '' : 's'} saved`);
+
     updateRunStatus(runId, 'preview', {
       step_results: JSON.stringify(stepResults),
       output_paths: JSON.stringify(outputPaths),
+      error: null,
       completed_at: new Date().toISOString(),
     });
 
@@ -338,12 +511,20 @@ export async function executePipeline(
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error(`[Pipeline] Run ${runId} failed:`, errorMsg);
 
+    const activeStep = (Object.keys(stepResults) as PipelineStepKey[]).find(
+      (key) => stepResults[key]?.state === 'running',
+    );
+    if (activeStep) {
+      setStepFailed(runId, stepResults, activeStep, errorMsg);
+    }
+
     updateRunStatus(runId, 'failed', {
       step_results: JSON.stringify(stepResults),
+      output_paths: JSON.stringify(outputPaths),
       error: errorMsg,
       completed_at: new Date().toISOString(),
     });
 
-    return { runId, status: 'failed', outputPaths: [], stepResults };
+    return { runId, status: 'failed', outputPaths, stepResults };
   }
 }

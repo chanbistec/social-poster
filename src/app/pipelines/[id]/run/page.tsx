@@ -214,9 +214,8 @@ export default function PipelineRunPage() {
             <div className="mb-2 flex justify-center">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
             </div>
-            <p className="text-sm font-medium text-orange-300">
-              Generating... This may take 1-2 minutes
-            </p>
+            <p className="text-sm font-medium text-orange-300">Starting pipeline run...</p>
+            <p className="mt-1 text-xs text-orange-200/80">You’ll be redirected to the live progress page in a moment.</p>
           </div>
         ) : (
           <button

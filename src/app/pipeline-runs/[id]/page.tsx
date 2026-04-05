@@ -1,6 +1,7 @@
 import db from "@/lib/db";
 import type { PipelineRunStatus } from "@/lib/types";
 import RunActions from "./run-actions";
+import RunProgressCard from "./run-progress-card";
 
 type PublishResultRow = {
   id: number;
@@ -110,23 +111,17 @@ export default async function PipelineRunDetailPage({
           </div>
 
           {Object.keys(stepResults).length > 0 && (
-            <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
-              <h2 className="mb-3 text-sm font-medium text-zinc-400">Pipeline Steps</h2>
-              <div className="space-y-3">
-                {Object.entries(stepResults).map(([key, step], i) => {
-                  const output = typeof step === "object" && step ? JSON.stringify(step, null, 2) : String(step);
-                  return (
-                    <div key={key} className="rounded-md border border-white/5 bg-zinc-800/50 p-3">
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className="text-xs font-medium text-zinc-300">Step {i + 1}</span>
-                        <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400">{key}</span>
-                      </div>
-                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-zinc-400">{output}</pre>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <RunProgressCard
+              runId={Number(id)}
+              initialRun={{
+                id: Number(run.id),
+                status,
+                step_results: stepResults,
+                output_paths: outputPaths,
+                error: errorMsg,
+                completed_at: (run.completed_at as string | null) ?? null,
+              }}
+            />
           )}
 
           {outputPaths.length > 0 && (
@@ -160,6 +155,26 @@ export default async function PipelineRunDetailPage({
               <h3 className="mb-1 text-sm font-medium text-red-400">Error</h3>
               <p className="break-all text-sm text-red-300">{errorMsg}</p>
             </div>
+          )}
+
+          {Object.keys(stepResults).length > 0 && (
+            <details className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
+              <summary className="cursor-pointer text-sm font-medium text-zinc-300">Raw step payloads</summary>
+              <div className="mt-3 space-y-3">
+                {Object.entries(stepResults).map(([key, step], i) => {
+                  const output = typeof step === "object" && step ? JSON.stringify(step, null, 2) : String(step);
+                  return (
+                    <div key={key} className="rounded-md border border-white/5 bg-zinc-800/50 p-3">
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-xs font-medium text-zinc-300">Step {i + 1}</span>
+                        <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400">{key}</span>
+                      </div>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-zinc-400">{output}</pre>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
           )}
 
           {publishResults.length > 0 && (
@@ -362,7 +377,7 @@ function ParamRow({ label, value }: { label: string; value: string }) {
 function StatusBanner({ status }: { status: PipelineRunStatus }) {
   const config: Record<PipelineRunStatus, { bg: string; text: string; label: string }> = {
     pending: { bg: "bg-zinc-700/50", text: "text-zinc-300", label: "Pending" },
-    generating: { bg: "bg-blue-500/20", text: "text-blue-300", label: "Generating..." },
+    generating: { bg: "bg-orange-500/20", text: "text-orange-200", label: "Generating..." },
     preview: { bg: "bg-amber-500/20", text: "text-amber-300", label: "Ready for Review" },
     approved: { bg: "bg-green-500/20", text: "text-green-300", label: "Approved" },
     publishing: { bg: "bg-blue-500/20", text: "text-blue-300", label: "Publishing..." },
