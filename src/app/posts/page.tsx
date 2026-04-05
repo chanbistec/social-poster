@@ -2,6 +2,7 @@ import Link from "next/link";
 export const dynamic = 'force-dynamic';
 import db from "@/lib/db";
 import PostCard from "@/components/post-card";
+import BulkRetryButton from "@/components/bulk-retry-button";
 
 const STATUSES = [
   "draft",
@@ -45,6 +46,21 @@ export default async function PostsPage({
        ORDER BY p.created_at DESC`
     )
     .all(...values) as any[];
+  const retryableFailedPosts = posts.filter((post: any) => ["failed", "published"].includes(post.status)).filter((post: any) => {
+    const latestFailed = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM publish_results latest
+      WHERE latest.post_id = ?
+        AND latest.id IN (
+          SELECT MAX(inner_pr.id)
+          FROM publish_results inner_pr
+          WHERE inner_pr.post_id = ?
+          GROUP BY inner_pr.platform
+        )
+        AND latest.status = 'failed'
+    `).get(post.id, post.id) as { count: number };
+    return latestFailed.count > 0;
+  }).length;
 
   // Get all tenants for filter dropdown
   const tenants = db
@@ -118,6 +134,17 @@ export default async function PostsPage({
           </Link>
         )}
       </form>
+
+      <div className="flex justify-start">
+        <BulkRetryButton
+          endpoint="/api/posts/bulk-retry"
+          label={`Retry all failed posts (${retryableFailedPosts})`}
+          busyLabel="Retrying failed posts..."
+          emptyLabel="No failed posts to retry"
+          count={retryableFailedPosts}
+          tenantId={tenantFilter || undefined}
+        />
+      </div>
 
       {/* Post list */}
       <div className="grid gap-4">

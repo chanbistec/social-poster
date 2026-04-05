@@ -68,6 +68,7 @@ export const config = {
     "/tenants/:path*",
     "/posts/:path*",
     "/pipelines/:path*",
+    "/pipeline-health/:path*",
     "/calendar/:path*",
     "/api/:path*",
   ],

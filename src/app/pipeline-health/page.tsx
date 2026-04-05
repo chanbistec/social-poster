@@ -6,6 +6,8 @@ import {
   isStuck,
   type PipelineHealthRow,
 } from "@/lib/pipeline-health";
+import PipelineHealthAutoRefresh from "@/components/pipeline-health-auto-refresh";
+import BulkRetryButton from "@/components/bulk-retry-button";
 
 type Search = {
   tenant_id?: string;
@@ -50,6 +52,7 @@ export default async function PipelineHealthPage({
        ORDER BY t.name, pt.name`
     )
     .all() as { id: number; name: string; tenant_name: string | null }[];
+  const retryableRuns = rows.filter((row) => Boolean(row.last_failed_platforms) && row.post_id && ["failed", "published"].includes(row.status)).length;
 
   return (
     <div className="space-y-6">
@@ -66,6 +69,20 @@ export default async function PipelineHealthPage({
         >
           Back to Pipelines
         </Link>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[1fr_auto] xl:items-center">
+        <PipelineHealthAutoRefresh intervalSeconds={30} />
+        <div className="xl:justify-self-end">
+          <BulkRetryButton
+            endpoint="/api/pipeline-runs/bulk-retry"
+            label={`Retry all failed runs (${retryableRuns})`}
+            busyLabel="Retrying failed runs..."
+            emptyLabel="No failed runs to retry"
+            count={retryableRuns}
+            tenantId={params.tenant_id || undefined}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-8">

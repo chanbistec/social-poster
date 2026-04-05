@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import SidebarAlertBadges from "@/components/sidebar-alert-badges";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard" },
@@ -91,7 +92,9 @@ export default function Sidebar({
                     : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
                 )}
               >
-                {item.label}
+                <span>{item.label}</span>
+                {item.href === "/pipeline-health" ? <SidebarAlertBadges section="pipeline" /> : null}
+                {item.href === "/posts" ? <SidebarAlertBadges section="posts" /> : null}
               </Link>
             );
           })}
