@@ -196,7 +196,7 @@ export default async function PipelineRunDetailPage({
                   <div key={result.platform} className="flex flex-col gap-2 rounded-md border border-white/5 bg-zinc-800/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium capitalize text-zinc-200">{result.platform}</span>
+                        <span className="text-sm font-medium capitalize text-zinc-200">{platformLabel(result.platform)}</span>
                         <span className={result.status === "success" ? "text-xs text-emerald-400" : "text-xs text-red-400"}>
                           {result.status}
                         </span>
@@ -327,10 +327,10 @@ function buildTimeline({
     events.push({
       key: `publish-${result.id}`,
       time: result.published_at,
-      title: `${capitalize(result.platform)} ${result.status === "success" ? "published" : "publish failed"}`,
+      title: `${platformLabel(result.platform)} ${result.status === "success" ? successActionLabel(result.platform) : "failed"}`,
       detail: result.status === "success"
-        ? "Platform accepted the content."
-        : result.error || "Platform publish failed without a recorded error.",
+        ? successDetail(result.platform)
+        : result.error || `${platformLabel(result.platform)} failed without a recorded error.`,
       tone: result.status === "success" ? "green" : "red",
       href: result.external_url,
     });
@@ -414,4 +414,35 @@ function formatDate(value: string) {
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function platformLabel(platform: string) {
+  switch (platform) {
+    case "youtube_playlist":
+      return "YouTube playlist";
+    case "pipeline":
+      return "Pipeline";
+    default:
+      return capitalize(platform.replace(/_/g, " "));
+  }
+}
+
+function successActionLabel(platform: string) {
+  switch (platform) {
+    case "youtube_playlist":
+      return "updated";
+    default:
+      return "published";
+  }
+}
+
+function successDetail(platform: string) {
+  switch (platform) {
+    case "youtube_playlist":
+      return "Playlist was created or updated and the video was added.";
+    case "youtube":
+      return "Video upload completed successfully.";
+    default:
+      return "Platform accepted the content.";
+  }
 }

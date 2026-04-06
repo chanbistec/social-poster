@@ -15,12 +15,15 @@ import {
 } from '@/lib/publishers';
 import type {
   PipelineTemplate,
+  PlatformType,
   TenantBranding,
   TtsConfig,
   ImagenConfig,
   VideoConfig,
   Platform,
+  VideoSafeZonesConfig,
 } from '@/lib/types';
+import { DEFAULT_VIDEO_SAFE_ZONES as VIDEO_SAFE_ZONE_DEFAULTS } from '@/lib/types';
 
 export interface RunInput {
   title: string;
@@ -127,6 +130,59 @@ function mergeBranding(
   };
 
   return { ...base, ...templateBranding };
+}
+
+function resolveAssetPath(p: unknown) {
+  if (!p || typeof p !== 'string') return undefined;
+  if (p.startsWith('/')) return p;
+  return join(process.cwd(), p);
+}
+
+function buildVideoRendererBranding(
+  branding: Record<string, unknown>,
+  videoConfig: VideoConfig | null,
+  platforms: PlatformType[],
+) {
+  const fontsObj = branding.fonts as Record<string, string> | undefined;
+  const fontPath =
+    fontsObj?.heading ?? fontsObj?.body ?? (branding as Record<string, unknown>).font as string | undefined;
+  const safeZones = ((videoConfig?.safe_zones ?? {}) as VideoSafeZonesConfig) || {};
+
+  return {
+    logoPath: resolveAssetPath(branding.logo_path),
+    logoSize: Number((branding as Record<string, unknown>).logo_size ?? 55),
+    watermarkText:
+      typeof branding.watermark === 'string'
+        ? branding.watermark
+        : (((branding.watermark as Record<string, unknown> | null)?.text as string | undefined) ?? 'qualitylife.lk'),
+    fontPath: fontPath ? resolveAssetPath(fontPath) : undefined,
+    introFrame: resolveAssetPath(branding.intro_frame),
+    outroFrame: resolveAssetPath(branding.outro_frame),
+    safeZones: Object.fromEntries(
+      (Object.keys(VIDEO_SAFE_ZONE_DEFAULTS) as PlatformType[]).map((platform) => [
+        platform,
+        {
+          ...VIDEO_SAFE_ZONE_DEFAULTS[platform],
+          ...(safeZones[platform] ?? {}),
+          safe_zone: {
+            ...VIDEO_SAFE_ZONE_DEFAULTS[platform].safe_zone,
+            ...(safeZones[platform]?.safe_zone ?? {}),
+          },
+          overlays: {
+            logo: {
+              ...VIDEO_SAFE_ZONE_DEFAULTS[platform].overlays.logo,
+              ...(safeZones[platform]?.overlays?.logo ?? {}),
+            },
+            watermark: {
+              ...VIDEO_SAFE_ZONE_DEFAULTS[platform].overlays.watermark,
+              ...(safeZones[platform]?.overlays?.watermark ?? {}),
+            },
+          },
+        },
+      ]),
+    ),
+    targetPlatforms: platforms,
+  };
 }
 
 function updateRunStatus(
@@ -321,6 +377,42 @@ function getCustomStepConfig(template: PipelineTemplate, type: string) {
   return steps.find((step) => step.type === type)?.config ?? {};
 }
 
+function createPublishResult(
+  postId: number,
+  platform: string,
+  status: 'success' | 'failed',
+  extra?: {
+    externalId?: string | null;
+    externalUrl?: string | null;
+    error?: string | null;
+    publishedAt?: string | null;
+  },
+) {
+  db.prepare(`
+    INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    postId,
+    platform,
+    status,
+    extra?.externalId ?? null,
+    extra?.externalUrl ?? null,
+    extra?.error ?? null,
+    extra?.publishedAt ?? null,
+  );
+}
+
+function getFailurePlatformForStep(stepKey?: string) {
+  switch (stepKey) {
+    case 'playlistAdd':
+      return 'youtube_playlist';
+    case 'uploadVideo':
+      return 'youtube';
+    default:
+      return 'pipeline';
+  }
+}
+
 export function createPipelineRun(templateId: number, input: RunInput): number {
   const template = db
     .prepare('SELECT id, type FROM pipeline_templates WHERE id = ?')
@@ -393,6 +485,7 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
   const imagenConfig = parseJson<ImagenConfig | null>(template.imagen_config, null);
   const videoConfig = parseJson<VideoConfig | null>(template.video_config, null);
   const templateBranding = parseJson<Record<string, unknown>>(template.branding, {});
+  const targetPlatforms = parseJson<PlatformType[]>(template.platforms, []);
   const tenantBranding = db
     .prepare('SELECT * FROM tenant_branding WHERE tenant_id = ?')
     .get(template.tenant_id) as TenantBranding | undefined;
@@ -434,13 +527,6 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
         });
         setStepComplete(runId, stepResults, 'scenes', scenes, summarizeScenes(scenes));
 
-        const cwd = process.cwd();
-        const resolvePath = (p: unknown) => {
-          if (!p || typeof p !== 'string') return undefined;
-          if (p.startsWith('/')) return p;
-          return join(cwd, p);
-        };
-
         const vcObj = (videoConfig as Record<string, unknown> | null) ?? {};
         const structure = (vcObj.structure ?? {}) as Record<string, unknown>;
         const introStruct = (structure.intro ?? {}) as Record<string, unknown>;
@@ -449,30 +535,19 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
         const timingObj = (vcObj.timing ?? {}) as Record<string, unknown>;
         const audioObj = (vcObj.audio ?? {}) as Record<string, unknown>;
 
-        const fontsObj = branding.fonts as Record<string, string> | undefined;
-        const fontPath =
-          fontsObj?.heading ?? fontsObj?.body ?? (branding as Record<string, unknown>).font as string | undefined;
-
-        const videoBranding = {
-          logoPath: resolvePath(branding.logo_path),
-          logoSize: (branding as Record<string, unknown>).logo_size ?? 55,
-          watermarkText: ((branding.watermark as Record<string, unknown>)?.text as string) ?? 'qualitylife.lk',
-          fontPath: fontPath ?? undefined,
-          introFrame: resolvePath(branding.intro_frame),
-          outroFrame: resolvePath(branding.outro_frame),
-        };
+        const videoBranding = buildVideoRendererBranding(branding, videoConfig, targetPlatforms);
 
         const videoTiming = {
-          introDuration: (introStruct.duration as number) ?? 2.0,
-          outroDuration: (outroStruct.duration as number) ?? 3.0,
-          voiceDelay: (timingObj.voice_delay as number) ?? 2.0,
+          introDuration: (introStruct.duration as number) ?? ((vcObj.intro_duration as number) ?? 2.0),
+          outroDuration: (outroStruct.duration as number) ?? ((vcObj.outro_duration as number) ?? 3.0),
+          voiceDelay: (timingObj.voice_delay as number) ?? ((vcObj.voice_delay as number) ?? 2.0),
           voiceBuffer: (timingObj.voice_buffer_after as number) ?? 0.5,
           sceneDistribution: (scenesStruct.distribution as number[]) ?? [0.3, 0.4, 0.3],
         };
 
         const videoAudio = {
-          bgmPath: resolvePath(branding.bgm_path) ?? resolvePath(audioObj.bgm),
-          bgmVolume: (audioObj.bgm_volume as number) ?? 0.2,
+          bgmPath: resolveAssetPath(branding.bgm_path) ?? resolveAssetPath(audioObj.bgm),
+          bgmVolume: (audioObj.bgm_volume as number) ?? ((vcObj.bgm_volume as number) ?? 0.2),
           voiceVolume: (audioObj.voice_volume as number) ?? 1.0,
           bgmFadeIn: (audioObj.bgm_fade_in as number) ?? 1.5,
           bgmFadeOut: (audioObj.bgm_fade_out as number) ?? 2.0,
@@ -534,14 +609,22 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
         }
         setStepComplete(runId, stepResults, 'scenes', scenesResult, summarizeScenes(scenesResult));
 
+        const videoBranding = buildVideoRendererBranding(branding, videoConfig, targetPlatforms);
+        const shortVideoConfig = (videoConfig as Record<string, unknown> | null) ?? {};
+
         setStepRunning(runId, stepResults, 'video');
         const video = await renderVideo({
           scenes: scenePaths,
           narration: { wavPath: narration.wavPath, duration: narration.duration },
-          branding,
-          timing: (videoConfig as Record<string, unknown>) ?? {},
+          branding: videoBranding,
+          timing: {
+            introDuration: (shortVideoConfig.intro_duration as number) ?? 2.0,
+            outroDuration: (shortVideoConfig.outro_duration as number) ?? 3.0,
+            voiceDelay: (shortVideoConfig.voice_delay as number) ?? 2.0,
+          },
           audio: {
-            bgmPath: branding.bgm_path ?? undefined,
+            bgmPath: resolveAssetPath(branding.bgm_path) ?? undefined,
+            bgmVolume: (shortVideoConfig.bgm_volume as number) ?? 0.2,
           },
           outputDir,
         });
@@ -626,10 +709,11 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
           throw new Error(youtubeResult.error || 'YouTube upload failed');
         }
 
-        db.prepare(`
-          INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
-          VALUES (?, 'youtube', 'success', ?, ?, NULL, ?)
-        `).run(postId, youtubeResult.external_id, youtubeResult.external_url ?? null, new Date().toISOString());
+        createPublishResult(postId, 'youtube', 'success', {
+          externalId: youtubeResult.external_id,
+          externalUrl: youtubeResult.external_url ?? null,
+          publishedAt: new Date().toISOString(),
+        });
         setStepComplete(runId, stepResults, 'uploadVideo', youtubeResult, 'Video uploaded to YouTube');
 
         if (input.category?.trim()) {
@@ -640,6 +724,11 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
             youtubeResult.external_id,
             (playlistConfig.privacy as 'public' | 'private' | 'unlisted' | undefined) ?? privacy,
           );
+          createPublishResult(postId, 'youtube_playlist', 'success', {
+            externalId: playlistResult.playlistId,
+            externalUrl: playlistResult.playlistUrl,
+            publishedAt: new Date().toISOString(),
+          });
           setStepComplete(
             runId,
             stepResults,
@@ -696,10 +785,9 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
 
     if (postId) {
       db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('failed', new Date().toISOString(), postId);
-      db.prepare(`
-        INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
-        VALUES (?, 'youtube', 'failed', NULL, NULL, ?, NULL)
-      `).run(postId, errorMsg);
+      createPublishResult(postId, getFailurePlatformForStep(activeStep), 'failed', {
+        error: errorMsg,
+      });
     }
 
     updateRunStatus(runId, 'failed', {
