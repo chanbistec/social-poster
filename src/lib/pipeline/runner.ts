@@ -1,4 +1,6 @@
 import { mkdirSync, existsSync } from 'fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join } from 'path';
 import { generateNarration } from './narration';
 import { generateScenes } from './scenes';
@@ -57,6 +59,8 @@ export interface PipelineStepResult {
   result?: unknown;
 }
 
+const execFileAsync = promisify(execFile);
+
 const STEP_META: Record<string, { label: string; description: string }> = {
   narration: {
     label: 'Narration',
@@ -81,6 +85,10 @@ const STEP_META: Record<string, { label: string; description: string }> = {
   playlistAdd: {
     label: 'Playlist',
     description: 'Create or update the destination YouTube playlist.',
+  },
+  vivaEngage: {
+    label: 'Viva Engage',
+    description: 'Share the uploaded academy video to Viva Engage.',
   },
   finalize: {
     label: 'Finalize',
@@ -229,22 +237,34 @@ function updateRunStatus(
   db.prepare(`UPDATE pipeline_runs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
 }
 
-function getStepOrder(templateType: PipelineTemplate['type']): PipelineStepKey[] {
-  switch (templateType) {
+function shouldPostToVivaEngage(template: Pick<PipelineTemplate, 'type' | 'steps'>) {
+  if (template.type !== 'custom') return false;
+  const uploadConfig = getCustomStepConfig(template, 'upload_video');
+  return Boolean(uploadConfig.viva_engage);
+}
+
+function getStepOrder(template: Pick<PipelineTemplate, 'type' | 'steps'>): PipelineStepKey[] {
+  switch (template.type) {
     case 'social_image':
       return ['scenes', 'socialImage', 'finalize'];
     case 'short':
     case 'reel':
       return ['narration', 'scenes', 'video', 'finalize'];
-    case 'custom':
-      return ['uploadVideo', 'playlistAdd', 'finalize'];
+    case 'custom': {
+      const steps: PipelineStepKey[] = ['uploadVideo', 'playlistAdd'];
+      if (shouldPostToVivaEngage(template)) {
+        steps.push('vivaEngage');
+      }
+      steps.push('finalize');
+      return steps;
+    }
     default:
       return ['narration', 'scenes', 'video', 'finalize'];
   }
 }
 
-function createInitialStepResults(templateType: PipelineTemplate['type']) {
-  const orderedKeys = getStepOrder(templateType);
+function createInitialStepResults(template: Pick<PipelineTemplate, 'type' | 'steps'>) {
+  const orderedKeys = getStepOrder(template);
   return Object.fromEntries(
     orderedKeys.map((key) => {
       const meta = getStepMeta(key);
@@ -372,9 +392,58 @@ function getYouTubePlatform(template: PipelineTemplate) {
   return platform;
 }
 
-function getCustomStepConfig(template: PipelineTemplate, type: string) {
+function getCustomStepConfig(template: Pick<PipelineTemplate, 'steps'>, type: string) {
   const steps = parseJson<Array<{ type?: string; config?: Record<string, unknown> }>>(template.steps, []);
   return steps.find((step) => step.type === type)?.config ?? {};
+}
+
+async function postToVivaEngage(message: string, groupId?: string) {
+  const scriptPath = join(process.cwd(), '..', 'scripts', 'viva-engage-post.js');
+  const args = [scriptPath, '--message', message];
+  if (groupId?.trim()) {
+    args.push('--group-id', groupId.trim());
+  }
+
+  const { stdout, stderr } = await execFileAsync(process.execPath, args, {
+    cwd: process.cwd(),
+    maxBuffer: 1024 * 1024,
+  });
+
+  const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
+  const idMatch = combined.match(/Message ID:\s*(\d+)/i);
+
+  return {
+    externalId: idMatch?.[1] ?? null,
+    output: combined,
+  };
+}
+
+function buildVivaEngageMessage(params: {
+  title: string;
+  description: string;
+  videoUrl: string;
+  playlistName?: string;
+  playlistUrl?: string;
+}) {
+  const lines = [
+    '🎓 New Academy Video Uploaded!',
+    '',
+    `📹 ${params.title}`,
+    `🔗 ${params.videoUrl}`,
+  ];
+
+  if (params.playlistName) {
+    lines.push(`📂 Playlist: ${params.playlistName}`);
+  }
+  if (params.playlistUrl) {
+    lines.push(`▶️ Playlist link: ${params.playlistUrl}`);
+  }
+  if (params.description.trim()) {
+    lines.push('', params.description.trim());
+  }
+
+  lines.push('', 'cc [[user:ranali@bistecglobal.com]]', '', '#BistecHeartsAcademy #Learning');
+  return lines.join('\n').trim();
 }
 
 function createPublishResult(
@@ -415,15 +484,15 @@ function getFailurePlatformForStep(stepKey?: string) {
 
 export function createPipelineRun(templateId: number, input: RunInput): number {
   const template = db
-    .prepare('SELECT id, type FROM pipeline_templates WHERE id = ?')
-    .get(templateId) as Pick<PipelineTemplate, 'id' | 'type'> | undefined;
+    .prepare('SELECT id, type, steps FROM pipeline_templates WHERE id = ?')
+    .get(templateId) as Pick<PipelineTemplate, 'id' | 'type' | 'steps'> | undefined;
 
   if (!template) {
     throw new Error(`Pipeline template not found: ${templateId}`);
   }
 
   const now = new Date().toISOString();
-  const stepResults = createInitialStepResults(template.type);
+  const stepResults = createInitialStepResults(template);
   const result = db
     .prepare(
       `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, started_at, created_at)
@@ -716,9 +785,16 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
         });
         setStepComplete(runId, stepResults, 'uploadVideo', youtubeResult, 'Video uploaded to YouTube');
 
+        let playlistResult:
+          | {
+              playlistId: string;
+              playlistUrl: string;
+            }
+          | undefined;
+
         if (input.category?.trim()) {
           setStepRunning(runId, stepResults, 'playlistAdd');
-          const playlistResult = await ensurePlaylistAndAddVideo(
+          playlistResult = await ensurePlaylistAndAddVideo(
             credentials,
             input.category,
             youtubeResult.external_id,
@@ -736,6 +812,42 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
             playlistResult,
             `Added to playlist ${input.category.trim()}`,
           );
+        }
+
+        if (shouldPostToVivaEngage(template) && youtubeResult.external_url) {
+          const vivaGroupId =
+            typeof uploadConfig.viva_group === 'string' && uploadConfig.viva_group.trim()
+              ? uploadConfig.viva_group.trim()
+              : undefined;
+
+          try {
+            setStepRunning(runId, stepResults, 'vivaEngage');
+            const vivaMessage = buildVivaEngageMessage({
+              title: input.title,
+              description: input.tip,
+              videoUrl: youtubeResult.external_url,
+              playlistName: input.category?.trim() || undefined,
+              playlistUrl: playlistResult?.playlistUrl,
+            });
+            const vivaResult = await postToVivaEngage(vivaMessage, vivaGroupId);
+            createPublishResult(postId, 'viva_engage', 'success', {
+              externalId: vivaResult.externalId,
+              publishedAt: new Date().toISOString(),
+            });
+            setStepComplete(
+              runId,
+              stepResults,
+              'vivaEngage',
+              vivaResult,
+              vivaGroupId ? `Shared to Viva Engage group ${vivaGroupId}` : 'Shared to Viva Engage',
+            );
+          } catch (error) {
+            const vivaError = error instanceof Error ? error.message : String(error);
+            createPublishResult(postId, 'viva_engage', 'failed', {
+              error: vivaError,
+            });
+            setStepFailed(runId, stepResults, 'vivaEngage', vivaError);
+          }
         }
 
         db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('published', new Date().toISOString(), postId);

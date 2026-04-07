@@ -420,6 +420,8 @@ function platformLabel(platform: string) {
   switch (platform) {
     case "youtube_playlist":
       return "YouTube playlist";
+    case "viva_engage":
+      return "Viva Engage";
     case "pipeline":
       return "Pipeline";
     default:
@@ -431,6 +433,8 @@ function successActionLabel(platform: string) {
   switch (platform) {
     case "youtube_playlist":
       return "updated";
+    case "viva_engage":
+      return "shared";
     default:
       return "published";
   }
@@ -442,6 +446,8 @@ function successDetail(platform: string) {
       return "Playlist was created or updated and the video was added.";
     case "youtube":
       return "Video upload completed successfully.";
+    case "viva_engage":
+      return "The academy update was posted to Viva Engage.";
     default:
       return "Platform accepted the content.";
   }
