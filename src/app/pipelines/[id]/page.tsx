@@ -3,9 +3,12 @@ import db from "@/lib/db";
 import type {
   ImagenConfig,
   PipelineRunStatus,
+  PlatformType,
   TtsConfig,
   VideoConfig,
+  VideoPlatformSafeZoneConfig,
 } from "@/lib/types";
+import { DEFAULT_VIDEO_SAFE_ZONES as SAFE_ZONE_DEFAULTS } from "@/lib/types";
 
 export default async function PipelineDetailPage({
   params,
@@ -37,6 +40,17 @@ export default async function PipelineDetailPage({
     )
     .all(id) as Array<Record<string, unknown>>;
 
+  const runRows = runs.map((run) => {
+    const stepResults = parseJson<Record<string, unknown>>(run.step_results as string | null, {});
+    const outputPaths = parseJson<string[]>(run.output_paths as string | null, []);
+    return {
+      ...run,
+      parsedStepResults: stepResults,
+      parsedOutputPaths: outputPaths,
+      progress: summarizeRunProgress(run.status as PipelineRunStatus, stepResults, outputPaths),
+    };
+  });
+
   // Parse JSON config fields
   const platforms = parseJson<string[]>(template.platforms as string, []);
   const ttsConfig = parseJson<TtsConfig | null>(template.tts_config as string | null, null);
@@ -50,6 +64,9 @@ export default async function PipelineDetailPage({
   );
   const pipelineType = (template.type as string) ?? "custom";
   const isVideo = pipelineType === "reel" || pipelineType === "short";
+  const safeZones = (videoConfig?.safe_zones ?? {}) as Partial<
+    Record<PlatformType, VideoPlatformSafeZoneConfig>
+  >;
 
   return (
     <div className="space-y-6">
@@ -175,53 +192,306 @@ export default async function PipelineDetailPage({
             )}
           </ConfigCard>
         )}
+
+        {isVideo && (
+          <ConfigCard title="Video Safe Zones">
+            <div className="space-y-3">
+              <p className="text-xs leading-5 text-zinc-500">
+                The renderer merges selected platform bounds conservatively, then places overlays
+                inside those safe areas.
+              </p>
+              <div className="space-y-3">
+                {(Object.keys(SAFE_ZONE_DEFAULTS) as PlatformType[]).map((platform) => {
+                  const config = safeZones[platform] ?? SAFE_ZONE_DEFAULTS[platform];
+                  const active = platforms.includes(platform);
+
+                  return (
+                    <div
+                      key={platform}
+                      className={`rounded-xl border p-3 ${
+                        active
+                          ? "border-orange-500/30 bg-orange-500/5"
+                          : "border-white/10 bg-zinc-950/70"
+                      }`}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium capitalize text-white">{platform}</span>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                            active
+                              ? "bg-orange-500/15 text-orange-300"
+                              : "bg-zinc-800 text-zinc-400"
+                          }`}
+                        >
+                          {active ? "Selected" : "Preset"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300 sm:grid-cols-4">
+                        <MetricChip label="Top" value={`${config.safe_zone.top}px`} />
+                        <MetricChip label="Bottom" value={`${config.safe_zone.bottom}px`} />
+                        <MetricChip label="Left" value={`${config.safe_zone.left}px`} />
+                        <MetricChip label="Right" value={`${config.safe_zone.right}px`} />
+                      </div>
+
+                      <div className="mt-3 grid gap-2 text-xs text-zinc-400 sm:grid-cols-2">
+                        <OverlaySummary
+                          label="Logo"
+                          anchor={config.overlays.logo.anchor}
+                          offsetX={config.overlays.logo.offset_x ?? 0}
+                          offsetY={config.overlays.logo.offset_y ?? 0}
+                        />
+                        <OverlaySummary
+                          label="Watermark"
+                          anchor={config.overlays.watermark.anchor}
+                          offsetX={config.overlays.watermark.offset_x ?? 0}
+                          offsetY={config.overlays.watermark.offset_y ?? 0}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </ConfigCard>
+        )}
       </div>
 
       {/* Run History */}
       <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
         <h2 className="mb-4 text-lg font-medium">Run History</h2>
-        {runs.length === 0 ? (
+        {runRows.length === 0 ? (
           <p className="text-sm text-zinc-500">No runs yet. Start your first run above.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-white/10 text-left text-zinc-400">
-                  <th className="pb-2 pr-4 font-medium">ID</th>
-                  <th className="pb-2 pr-4 font-medium">Status</th>
-                  <th className="pb-2 pr-4 font-medium">Created</th>
-                  <th className="pb-2 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <tr
-                    key={run.id as number}
-                    className="border-b border-white/5 hover:bg-white/5"
-                  >
-                    <td className="py-2 pr-4 font-mono text-zinc-300">
-                      #{run.id as number}
-                    </td>
-                    <td className="py-2 pr-4">
+          <div className="space-y-3">
+            {runRows.map((run) => (
+              <div
+                key={run.id as number}
+                className="rounded-xl border border-white/10 bg-zinc-950/70 p-4 transition-colors hover:border-white/15"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="font-mono text-sm text-zinc-300">#{run.id as number}</span>
                       <StatusBadge status={run.status as PipelineRunStatus} />
-                    </td>
-                    <td className="py-2 pr-4 text-zinc-400">
-                      {formatDate(run.created_at as string)}
-                    </td>
-                    <td className="py-2">
-                      <Link
-                        href={`/pipeline-runs/${run.id}`}
-                        className="text-orange-400 hover:text-orange-300 transition-colors"
-                      >
-                        View →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <span className="text-xs text-zinc-500">
+                        Created {formatDate(run.created_at as string)}
+                      </span>
+                      {Boolean(run.completed_at) && (
+                        <span className="text-xs text-zinc-500">
+                          Finished {formatDate(run.completed_at as string)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-xs uppercase tracking-wide text-zinc-500">Progress</div>
+                        <div className="mt-1 text-sm text-zinc-200">{run.progress.headline}</div>
+                        {run.progress.detail ? (
+                          <div className="mt-1 text-xs text-zinc-400">{run.progress.detail}</div>
+                        ) : null}
+                      </div>
+
+                      {run.progress.outputs.length > 0 ? (
+                        <div>
+                          <div className="text-xs uppercase tracking-wide text-zinc-500">Results</div>
+                          <div className="mt-1 flex flex-wrap gap-2">
+                            {run.progress.outputs.map((output) => (
+                              <span
+                                key={output}
+                                className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300"
+                              >
+                                {output}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <Link
+                    href={`/pipeline-runs/${run.id}`}
+                    className="inline-flex items-center text-sm text-orange-400 transition-colors hover:text-orange-300"
+                  >
+                    View run →
+                  </Link>
+                </div>
+              </div>
+            ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function summarizeRunProgress(
+  status: PipelineRunStatus,
+  stepResults: Record<string, unknown>,
+  outputPaths: string[]
+) {
+  const normalizedSteps = Object.entries(stepResults).map(([key, raw]) => normalizeStep(key, raw));
+  const runningStep = normalizedSteps.find((step) => step.state === "running");
+  const failedStep = normalizedSteps.find((step) => step.state === "failed");
+  const completedSteps = normalizedSteps.filter((step) => step.state === "completed");
+
+  const outputs = buildRunOutputs(normalizedSteps, outputPaths);
+
+  if (failedStep) {
+    return {
+      headline: `${failedStep.label} failed`,
+      detail: failedStep.error || "The run stopped before finishing.",
+      outputs,
+    };
+  }
+
+  if (runningStep) {
+    return {
+      headline: `${runningStep.label} in progress`,
+      detail:
+        runningStep.summary ||
+        runningStep.description ||
+        `${completedSteps.length} step${completedSteps.length === 1 ? "" : "s"} completed so far.`,
+      outputs,
+    };
+  }
+
+  if (status === "published") {
+    return {
+      headline: "Published successfully",
+      detail:
+        completedSteps.at(-1)?.summary ||
+        `${completedSteps.length} step${completedSteps.length === 1 ? "" : "s"} completed.`,
+      outputs,
+    };
+  }
+
+  if (status === "preview") {
+    return {
+      headline: "Ready for review",
+      detail:
+        completedSteps.at(-1)?.summary ||
+        `${completedSteps.length} step${completedSteps.length === 1 ? "" : "s"} completed.`,
+      outputs,
+    };
+  }
+
+  return {
+    headline: normalizedSteps.length > 0 ? "Queued pipeline run" : "Run created",
+    detail:
+      completedSteps.length > 0
+        ? `${completedSteps.length} step${completedSteps.length === 1 ? "" : "s"} completed.`
+        : "Waiting for the pipeline worker to start.",
+    outputs,
+  };
+}
+
+function buildRunOutputs(
+  steps: Array<{
+    key: string;
+    label: string;
+    state: string;
+    summary?: string;
+    description?: string;
+    error?: string;
+    result?: unknown;
+  }>,
+  outputPaths: string[]
+) {
+  const labels = new Set<string>();
+
+  if (outputPaths.length > 0) {
+    labels.add(`${outputPaths.length} file${outputPaths.length === 1 ? "" : "s"} saved`);
+  }
+
+  for (const step of steps) {
+    if (step.state !== "completed") continue;
+
+    if (step.key === "uploadVideo") {
+      labels.add("YouTube upload complete");
+    } else if (step.key === "playlistAdd") {
+      labels.add("Playlist updated");
+    } else if (step.key === "vivaEngage") {
+      labels.add("Viva Engage posted");
+    } else if (step.key === "video") {
+      labels.add("Video rendered");
+    } else if (step.key === "socialImage") {
+      labels.add("Social image rendered");
+    }
+  }
+
+  return [...labels];
+}
+
+function normalizeStep(key: string, raw: unknown) {
+  if (raw && typeof raw === "object") {
+    const step = raw as Record<string, unknown>;
+    return {
+      key,
+      label: typeof step.label === "string" ? step.label : titleCase(key),
+      description: typeof step.description === "string" ? step.description : undefined,
+      state:
+        step.state === "pending" ||
+        step.state === "running" ||
+        step.state === "completed" ||
+        step.state === "failed"
+          ? step.state
+          : "pending",
+      summary: typeof step.summary === "string" ? step.summary : undefined,
+      error: typeof step.error === "string" ? step.error : undefined,
+      result: step.result,
+    };
+  }
+
+  return {
+    key,
+    label: titleCase(key),
+    description: undefined,
+    state: "completed",
+    summary: typeof raw === "string" ? raw : undefined,
+    error: undefined,
+    result: raw,
+  };
+}
+
+function titleCase(value: string) {
+  return value
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[-_]/g, " ")
+    .replace(/^./, (char) => char.toUpperCase())
+    .trim();
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-zinc-900 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-1 font-medium text-white">{value}</div>
+    </div>
+  );
+}
+
+function OverlaySummary({
+  label,
+  anchor,
+  offsetX,
+  offsetY,
+}: {
+  label: string;
+  anchor: string;
+  offsetX: number;
+  offsetY: number;
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-zinc-900 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="mt-1 text-zinc-200">{anchor}</div>
+      <div className="mt-1 text-zinc-500">
+        x {offsetX >= 0 ? "+" : ""}
+        {offsetX}px · y {offsetY >= 0 ? "+" : ""}
+        {offsetY}px
       </div>
     </div>
   );
