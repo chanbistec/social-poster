@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DEFAULT_VIDEO_SAFE_ZONES,
+  type PlatformType,
+  type VideoOverlayAnchor,
+  type VideoPlatformSafeZoneConfig,
+  type VideoSafeZonesConfig,
+} from "@/lib/types";
 
 const TYPES = [
   { value: "reel", label: "Reel" },
@@ -11,6 +18,14 @@ const TYPES = [
 ];
 
 const PLATFORMS = ["youtube", "instagram", "facebook"];
+const OVERLAY_ANCHORS: VideoOverlayAnchor[] = [
+  "top-left",
+  "top-center",
+  "top-right",
+  "bottom-left",
+  "bottom-center",
+  "bottom-right",
+];
 
 const ASPECT_RATIOS = ["9:16", "1:1", "16:9"];
 
@@ -80,6 +95,9 @@ export default function NewPipelinePage() {
   const [videoOutroDuration, setVideoOutroDuration] = useState(3);
   const [videoVoiceDelay, setVideoVoiceDelay] = useState(2);
   const [videoBgmVolume, setVideoBgmVolume] = useState(0.2);
+  const [videoSafeZones, setVideoSafeZones] = useState<VideoSafeZonesConfig>({
+    ...DEFAULT_VIDEO_SAFE_ZONES,
+  });
 
   useEffect(() => {
     fetch("/api/tenants")
@@ -95,6 +113,44 @@ export default function NewPipelinePage() {
   };
 
   const showVideoConfig = type === "reel" || type === "short";
+
+  const updatePlatformSafeZone = (
+    platform: PlatformType,
+    field: "top" | "bottom" | "left" | "right",
+    value: number
+  ) => {
+    setVideoSafeZones((prev) => ({
+      ...prev,
+      [platform]: {
+        ...(prev[platform] ?? DEFAULT_VIDEO_SAFE_ZONES[platform]),
+        safe_zone: {
+          ...((prev[platform] ?? DEFAULT_VIDEO_SAFE_ZONES[platform]).safe_zone),
+          [field]: Math.max(0, value || 0),
+        },
+      },
+    }));
+  };
+
+  const updateOverlayPosition = (
+    platform: PlatformType,
+    overlay: "logo" | "watermark",
+    field: "anchor" | "offset_x" | "offset_y",
+    value: string | number
+  ) => {
+    setVideoSafeZones((prev) => ({
+      ...prev,
+      [platform]: {
+        ...(prev[platform] ?? DEFAULT_VIDEO_SAFE_ZONES[platform]),
+        overlays: {
+          ...(prev[platform]?.overlays ?? DEFAULT_VIDEO_SAFE_ZONES[platform].overlays),
+          [overlay]: {
+            ...((prev[platform]?.overlays ?? DEFAULT_VIDEO_SAFE_ZONES[platform].overlays)[overlay]),
+            [field]: field === "anchor" ? value : Number(value) || 0,
+          },
+        },
+      },
+    }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,12 +180,13 @@ export default function NewPipelinePage() {
       };
     }
 
-    if (showVideoConfig && videoOpen) {
+    if (showVideoConfig) {
       body.video_config = {
         intro_duration: videoIntroDuration,
         outro_duration: videoOutroDuration,
         voice_delay: videoVoiceDelay,
         bgm_volume: videoBgmVolume,
+        safe_zones: videoSafeZones,
       };
     }
 
@@ -382,6 +439,142 @@ export default function NewPipelinePage() {
                   onChange={(e) => setVideoBgmVolume(parseFloat(e.target.value) || 0.2)}
                   className={inputClass}
                 />
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <h3 className="text-sm font-medium text-white">Platform safe zones</h3>
+                <p className="mt-1 text-xs text-zinc-400">
+                  Fine-tune how far overlays stay away from platform UI chrome. When multiple
+                  platforms are selected, rendering uses the most conservative bounds.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                {PLATFORMS.map((platform) => {
+                  const config =
+                    (videoSafeZones[platform as PlatformType] as VideoPlatformSafeZoneConfig | undefined) ??
+                    DEFAULT_VIDEO_SAFE_ZONES[platform as PlatformType];
+                  const selected = platforms.includes(platform);
+
+                  return (
+                    <div
+                      key={platform}
+                      className={`rounded-xl border p-4 transition-colors ${
+                        selected
+                          ? "border-orange-500/40 bg-orange-500/5"
+                          : "border-white/10 bg-zinc-950/70"
+                      }`}
+                    >
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-medium capitalize text-white">{platform}</h4>
+                          <p className="text-xs text-zinc-500">
+                            {selected ? "Selected for this template" : "Saved as a platform preset"}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                            selected
+                              ? "bg-orange-500/15 text-orange-300"
+                              : "bg-zinc-800 text-zinc-400"
+                          }`}
+                        >
+                          {selected ? "Active" : "Preset"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        {(["top", "bottom", "left", "right"] as const).map((field) => (
+                          <div key={field}>
+                            <label className={labelClass}>{field[0].toUpperCase() + field.slice(1)} inset</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={config.safe_zone[field]}
+                              onChange={(e) =>
+                                updatePlatformSafeZone(
+                                  platform as PlatformType,
+                                  field,
+                                  parseInt(e.target.value, 10) || 0
+                                )
+                              }
+                              className={inputClass}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-4 space-y-4 rounded-lg border border-white/10 bg-zinc-900/70 p-3">
+                        {(["logo", "watermark"] as const).map((overlay) => (
+                          <div key={overlay} className="space-y-3">
+                            <div>
+                              <h5 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                                {overlay}
+                              </h5>
+                            </div>
+                            <div>
+                              <label className={labelClass}>Anchor</label>
+                              <select
+                                value={config.overlays[overlay].anchor}
+                                onChange={(e) =>
+                                  updateOverlayPosition(
+                                    platform as PlatformType,
+                                    overlay,
+                                    "anchor",
+                                    e.target.value
+                                  )
+                                }
+                                className={inputClass}
+                              >
+                                {OVERLAY_ANCHORS.map((anchor) => (
+                                  <option key={anchor} value={anchor}>
+                                    {anchor}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className={labelClass}>Offset X</label>
+                                <input
+                                  type="number"
+                                  value={config.overlays[overlay].offset_x ?? 0}
+                                  onChange={(e) =>
+                                    updateOverlayPosition(
+                                      platform as PlatformType,
+                                      overlay,
+                                      "offset_x",
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                  className={inputClass}
+                                />
+                              </div>
+                              <div>
+                                <label className={labelClass}>Offset Y</label>
+                                <input
+                                  type="number"
+                                  value={config.overlays[overlay].offset_y ?? 0}
+                                  onChange={(e) =>
+                                    updateOverlayPosition(
+                                      platform as PlatformType,
+                                      overlay,
+                                      "offset_y",
+                                      parseInt(e.target.value, 10) || 0
+                                    )
+                                  }
+                                  className={inputClass}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </CollapsibleSection>

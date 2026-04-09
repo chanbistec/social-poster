@@ -110,8 +110,64 @@ export interface VideoConfig {
   codec?: string;
   transition?: string;
   duration?: number;
+  safe_zones?: VideoSafeZonesConfig;
   [key: string]: unknown;
 }
+
+export type VideoOverlayAnchor =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
+
+export interface VideoSafeZoneBounds {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export interface VideoOverlayPositionConfig {
+  anchor: VideoOverlayAnchor;
+  offset_x?: number;
+  offset_y?: number;
+}
+
+export interface VideoPlatformSafeZoneConfig {
+  safe_zone: VideoSafeZoneBounds;
+  overlays: {
+    logo: VideoOverlayPositionConfig;
+    watermark: VideoOverlayPositionConfig;
+  };
+}
+
+export type VideoSafeZonesConfig = Partial<Record<PlatformType, VideoPlatformSafeZoneConfig>>;
+
+export const DEFAULT_VIDEO_SAFE_ZONES: Record<PlatformType, VideoPlatformSafeZoneConfig> = {
+  instagram: {
+    safe_zone: { top: 220, bottom: 260, left: 72, right: 72 },
+    overlays: {
+      logo: { anchor: 'top-right', offset_x: 24, offset_y: 20 },
+      watermark: { anchor: 'bottom-center', offset_x: 0, offset_y: 28 },
+    },
+  },
+  youtube: {
+    safe_zone: { top: 180, bottom: 240, left: 64, right: 64 },
+    overlays: {
+      logo: { anchor: 'top-right', offset_x: 20, offset_y: 16 },
+      watermark: { anchor: 'bottom-center', offset_x: 0, offset_y: 24 },
+    },
+  },
+  facebook: {
+    safe_zone: { top: 200, bottom: 250, left: 68, right: 68 },
+    overlays: {
+      logo: { anchor: 'top-right', offset_x: 20, offset_y: 20 },
+      watermark: { anchor: 'bottom-center', offset_x: 0, offset_y: 24 },
+    },
+  },
+};
 
 export interface PipelineTemplate {
   id: number;

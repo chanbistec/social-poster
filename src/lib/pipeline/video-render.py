@@ -98,6 +98,118 @@ def make_circular_logo(logo_path, size):
     return logo, mask
 
 
+def get_default_safe_zones():
+    return {
+        "instagram": {
+            "safe_zone": {"top": 220, "bottom": 260, "left": 72, "right": 72},
+            "overlays": {
+                "logo": {"anchor": "top-right", "offset_x": 24, "offset_y": 20},
+                "watermark": {"anchor": "bottom-center", "offset_x": 0, "offset_y": 28},
+            },
+        },
+        "youtube": {
+            "safe_zone": {"top": 180, "bottom": 240, "left": 64, "right": 64},
+            "overlays": {
+                "logo": {"anchor": "top-right", "offset_x": 20, "offset_y": 16},
+                "watermark": {"anchor": "bottom-center", "offset_x": 0, "offset_y": 24},
+            },
+        },
+        "facebook": {
+            "safe_zone": {"top": 200, "bottom": 250, "left": 68, "right": 68},
+            "overlays": {
+                "logo": {"anchor": "top-right", "offset_x": 20, "offset_y": 20},
+                "watermark": {"anchor": "bottom-center", "offset_x": 0, "offset_y": 24},
+            },
+        },
+    }
+
+
+def deep_merge(base, override):
+    if not isinstance(base, dict):
+        return override if override is not None else base
+    result = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def resolve_platform_safe_zones(branding, target_platforms):
+    defaults = get_default_safe_zones()
+    configured = branding.get("safeZones") or {}
+    resolved = {}
+    for platform, default_cfg in defaults.items():
+        resolved[platform] = deep_merge(default_cfg, configured.get(platform) or {})
+
+    selected = [p for p in target_platforms if p in resolved] or list(defaults.keys())
+    effective_zone = {
+        "top": max(resolved[p]["safe_zone"].get("top", 0) for p in selected),
+        "bottom": max(resolved[p]["safe_zone"].get("bottom", 0) for p in selected),
+        "left": max(resolved[p]["safe_zone"].get("left", 0) for p in selected),
+        "right": max(resolved[p]["safe_zone"].get("right", 0) for p in selected),
+    }
+    return resolved, effective_zone, selected
+
+
+def effective_overlay_config(resolved, selected_platforms, overlay_name):
+    overlay_configs = [resolved[p]["overlays"][overlay_name] for p in selected_platforms]
+    anchors = [cfg.get("anchor", "top-right") for cfg in overlay_configs]
+    anchor = anchors[0] if all(a == anchors[0] for a in anchors) else get_default_safe_zones()["instagram"]["overlays"][overlay_name]["anchor"]
+
+    offset_xs = [int(cfg.get("offset_x", 0) or 0) for cfg in overlay_configs]
+    offset_ys = [int(cfg.get("offset_y", 0) or 0) for cfg in overlay_configs]
+
+    if "left" in anchor:
+        offset_x = max(offset_xs)
+    elif "right" in anchor:
+        offset_x = min(offset_xs)
+    else:
+        offset_x = min(offset_xs, key=lambda value: abs(value)) if offset_xs else 0
+
+    if anchor.startswith("top-"):
+        offset_y = max(offset_ys)
+    else:
+        offset_y = min(offset_ys)
+
+    return {
+        "anchor": anchor,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+    }
+
+
+def anchor_position(anchor, box_w, box_h, safe_zone, width, height):
+    left = safe_zone["left"]
+    right = width - safe_zone["right"]
+    top = safe_zone["top"]
+    bottom = height - safe_zone["bottom"]
+
+    x_positions = {
+        "left": left,
+        "center": left + max(0, (right - left - box_w)) // 2,
+        "right": max(left, right - box_w),
+    }
+    y_positions = {
+        "top": top,
+        "bottom": max(top, bottom - box_h),
+    }
+
+    vertical, horizontal = anchor.split("-")
+    return x_positions[horizontal], y_positions[vertical]
+
+
+def overlay_box_position(overlay_cfg, box_w, box_h, safe_zone, width, height):
+    anchor = overlay_cfg.get("anchor", "top-right")
+    offset_x = int(overlay_cfg.get("offset_x", 0) or 0)
+    offset_y = int(overlay_cfg.get("offset_y", 0) or 0)
+    base_x, base_y = anchor_position(anchor, box_w, box_h, safe_zone, width, height)
+    x = min(max(0, base_x + offset_x), max(0, width - box_w))
+    y = min(max(0, base_y + offset_y), max(0, height - box_h))
+    return x, y
+
+
 # ---------------------------------------------------------------------------
 # Generate static text overlay PNGs (transparent)
 # ---------------------------------------------------------------------------
@@ -107,24 +219,25 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
     font_path = branding.get("fontPath", "")
     width = config.get("width", 1080)
     height = config.get("height", 1920)
+    target_platforms = branding.get("targetPlatforms") or config.get("targetPlatforms") or []
+    _, effective_safe_zone, _ = resolve_platform_safe_zones(branding, target_platforms)
 
     ORANGE = (249, 115, 22)  # #F97316
     WHITE = (255, 255, 255)
 
     # Logo
     logo_path = branding.get("logoPath")
-    logo_size = 80
-    # Position logo in safe zone — avoid IG camera icon (top-right) and YT UI
-    # Right side, well below status bar + IG icons (~200px from top, 100px from right)
-    logo_pos = (width - logo_size - 100, 200)
+    logo_size = int(branding.get("logoSize", 80) or 80)
+    logo_cfg = (branding.get("safeZones") or {}).get("instagram", {}).get("overlays", {}).get("logo", {})
 
     logo_img, logo_mask = None, None
+    logo_pos = None
     if logo_path and os.path.isfile(expand(logo_path)):
         logo_img, logo_mask = make_circular_logo(logo_path, logo_size)
+        logo_cfg = branding.get("effectiveOverlays", {}).get("logo", logo_cfg)
+        logo_pos = overlay_box_position(logo_cfg, logo_size, logo_size, effective_safe_zone, width, height)
 
     wm_text = branding.get("watermarkText", "qualitylife.lk")
-    # Keep watermark above IG/YT bottom UI (safe zone ends ~1700px on 1920h)
-    wm_y = 1680
     fnt_wm = load_font(font_path, 18)
 
     # Split tip text into 3 parts
@@ -134,23 +247,26 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
     s2 = words[total // 3:2 * total // 3]
     s3 = words[2 * total // 3:]
 
-    # Safe zone for text: y=250 to y=1600 (avoids IG/YT UI at top and bottom)
+    title_y = max(effective_safe_zone["top"] + 120, int(height * 0.18))
+    fact_y = max(effective_safe_zone["top"] + 520, int(height * 0.42))
+    cta_y = max(effective_safe_zone["top"] + 500, int(height * 0.39))
+
     scene_texts = [
         # Scene 1: Hook — upper-center area
         [
-            ("DID YOU KNOW?", load_font(font_path, 38), ORANGE, 350),
-            (tip_title.upper(), load_font(font_path, 54), WHITE, 420),
+            ("DID YOU KNOW?", load_font(font_path, 38), ORANGE, title_y),
+            (tip_title.upper(), load_font(font_path, 54), WHITE, title_y + 70),
         ],
         # Scene 2: Fact — center area
         [
-            (" ".join(s2[:4]), load_font(font_path, 44), WHITE, 800),
-            (" ".join(s2[4:8]) if len(s2) > 4 else "", load_font(font_path, 52), ORANGE, 870),
-            (" ".join(s2[8:]) if len(s2) > 8 else "", load_font(font_path, 44), WHITE, 940),
+            (" ".join(s2[:4]), load_font(font_path, 44), WHITE, fact_y),
+            (" ".join(s2[4:8]) if len(s2) > 4 else "", load_font(font_path, 52), ORANGE, fact_y + 70),
+            (" ".join(s2[8:]) if len(s2) > 8 else "", load_font(font_path, 44), WHITE, fact_y + 140),
         ],
         # Scene 3: CTA — center area
         [
-            (" ".join(s3[:5]), load_font(font_path, 48), WHITE, 750),
-            (" ".join(s3[5:]) if len(s3) > 5 else "", load_font(font_path, 56), ORANGE, 830),
+            (" ".join(s3[:5]), load_font(font_path, 48), WHITE, cta_y),
+            (" ".join(s3[5:]) if len(s3) > 5 else "", load_font(font_path, 56), ORANGE, cta_y + 80),
         ],
     ]
 
@@ -180,13 +296,15 @@ def generate_text_overlays(tip_title, tip_text, config, tmpdir):
             shadow_text(d, (x, y), text, font, color)
 
         # Static logo
-        if logo_img:
+        if logo_img and logo_pos:
             img.paste(logo_img, logo_pos, logo_mask)
 
         # Watermark
         bb = d.textbbox((0, 0), wm_text, font=fnt_wm)
         tw = bb[2] - bb[0]
-        wm_x = (width - tw) // 2
+        th = bb[3] - bb[1]
+        watermark_cfg = branding.get("effectiveOverlays", {}).get("watermark", {"anchor": "bottom-center"})
+        wm_x, wm_y = overlay_box_position(watermark_cfg, tw, th, effective_safe_zone, width, height)
         for dx, dy in [(1, 1), (1, 0), (0, 1)]:
             d.text((wm_x + dx, wm_y + dy), wm_text, font=fnt_wm, fill=(0, 0, 0, 180))
         d.text((wm_x, wm_y), wm_text, font=fnt_wm, fill=(255, 255, 255, 200))
@@ -274,6 +392,18 @@ def main():
     kb_names = config.get("kenBurns", ["zoom_in", "slow_pan", "zoom_out"])
     tip_title = config.get("tipTitle", "Health Tip")
     tip_text = config.get("tipText", "")
+
+    target_platforms = branding.get("targetPlatforms") or config.get("targetPlatforms") or []
+    resolved_safe_zones, effective_safe_zone, selected_platforms = resolve_platform_safe_zones(
+        branding, target_platforms
+    )
+    branding["safeZones"] = resolved_safe_zones
+    branding["targetPlatforms"] = selected_platforms
+    branding["effectiveOverlays"] = {
+        "logo": effective_overlay_config(resolved_safe_zones, selected_platforms, "logo"),
+        "watermark": effective_overlay_config(resolved_safe_zones, selected_platforms, "watermark"),
+    }
+    branding["effectiveSafeZone"] = effective_safe_zone
 
     ffmpeg = expand(config.get("ffmpegPath", "ffmpeg"))
     fps = config.get("fps", 30)
