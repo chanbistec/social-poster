@@ -22,6 +22,22 @@ interface TemplateInfo {
   name: string;
   type: string;
   tenant_id: string;
+  steps?: string | null;
+  tenant_name?: string | null;
+}
+
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function getCustomStepConfig(template: TemplateInfo | null, type: string) {
+  const steps = parseJson<Array<{ type?: string; config?: Record<string, unknown> }>>(template?.steps, []);
+  return steps.find((step) => step.type === type)?.config ?? {};
 }
 
 export default function PipelineRunPage() {
@@ -42,6 +58,12 @@ export default function PipelineRunPage() {
   const [mediaPath, setMediaPath] = useState<string | null>(null);
 
   const isCustom = template?.type === "custom";
+  const uploadConfig = getCustomStepConfig(template, "upload_video");
+  const playlistConfig = getCustomStepConfig(template, "playlist_add");
+  const privacy = typeof uploadConfig.privacy === "string" ? uploadConfig.privacy : "unlisted";
+  const vivaEnabled = Boolean(uploadConfig.viva_engage);
+  const vivaGroup = typeof uploadConfig.viva_group === "string" ? uploadConfig.viva_group : null;
+  const playlistPrivacy = typeof playlistConfig.privacy === "string" ? playlistConfig.privacy : privacy;
 
   useEffect(() => {
     fetch(`/api/pipelines/${id}`)
@@ -158,7 +180,7 @@ export default function PipelineRunPage() {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-zinc-300">
-              {isCustom ? "Playlist / Series" : "Category"}
+              {isCustom ? "Playlist / Series" : "Category"} {isCustom && <span className="text-red-400">*</span>}
             </label>
             {isCustom ? (
               <input
@@ -208,6 +230,39 @@ export default function PipelineRunPage() {
               />
             </div>
           )}
+
+          {isCustom ? (
+            <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-medium text-orange-100">Academy upload preflight</h2>
+                  <p className="mt-1 text-xs text-zinc-400">
+                    Starting this run will validate the uploaded file and refresh the connected YouTube token before the background upload begins.
+                  </p>
+                </div>
+                <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-1 text-xs text-orange-200">
+                  {template?.tenant_name || template?.tenant_id}
+                </span>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">YouTube privacy</div>
+                  <div className="mt-1 text-sm text-zinc-200">{privacy}</div>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">Playlist handling</div>
+                  <div className="mt-1 text-sm text-zinc-200">Auto-add / create · {playlistPrivacy}</div>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-zinc-950/60 px-3 py-2 sm:col-span-2">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">Viva Engage</div>
+                  <div className="mt-1 text-sm text-zinc-200">
+                    {vivaEnabled ? `Enabled${vivaGroup ? ` · group ${vivaGroup}` : ""}` : "Disabled"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {isCustom && template.tenant_id ? (
             <div className="space-y-2 rounded-lg border border-white/10 bg-zinc-950/40 p-4">

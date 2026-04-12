@@ -14,7 +14,7 @@ const VALID_TYPES = ['reel', 'short', 'social_image', 'custom'] as const;
 
 /** GET /api/pipelines — list pipeline templates, optional ?tenant_id= filter */
 export async function GET(req: NextRequest) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const tenantId = req.nextUrl.searchParams.get('tenant_id');
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/pipelines — create a pipeline template */
 export async function POST(req: NextRequest) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => null);

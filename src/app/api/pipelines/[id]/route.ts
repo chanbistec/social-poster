@@ -14,7 +14,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /** GET /api/pipelines/[id] — single template with tenant name and recent runs count */
 export async function GET(_req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
@@ -44,7 +44,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
 
 /** PUT /api/pipelines/[id] — update template (partial) */
 export async function PUT(req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
@@ -108,7 +108,7 @@ export async function PUT(req: NextRequest, ctx: RouteContext) {
 
 /** DELETE /api/pipelines/[id] — delete template */
 export async function DELETE(_req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;

@@ -561,7 +561,7 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
   const branding = mergeBranding(tenantBranding, templateBranding);
 
   const stepResults = {
-    ...createInitialStepResults(template.type),
+    ...createInitialStepResults(template),
     ...parseJson<Record<PipelineStepKey, PipelineStepResult> | null>(run.step_results, null),
   } as Record<PipelineStepKey, PipelineStepResult>;
 
