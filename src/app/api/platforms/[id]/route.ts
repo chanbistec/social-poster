@@ -18,7 +18,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /** GET /api/platforms/[id] — single platform */
 export async function GET(req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest, ctx: RouteContext) {
 
 /** PUT /api/platforms/[id] — update credentials/config */
 export async function PUT(req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;
@@ -97,7 +97,7 @@ export async function PUT(req: NextRequest, ctx: RouteContext) {
 
 /** DELETE /api/platforms/[id] — remove a platform */
 export async function DELETE(_req: NextRequest, ctx: RouteContext) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await ctx.params;

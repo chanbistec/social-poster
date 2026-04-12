@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PlatformType } from "@/lib/types";
 
@@ -9,6 +9,8 @@ const PLATFORM_TYPES: { value: PlatformType; label: string }[] = [
   { value: "instagram", label: "Instagram" },
   { value: "facebook", label: "Facebook" },
 ];
+
+const META_TYPES: PlatformType[] = ["instagram", "facebook"];
 
 interface PlatformFormProps {
   tenantId: string;
@@ -33,15 +35,24 @@ export default function PlatformForm({
   const [credentials, setCredentials] = useState(defaultCredentials);
   const [config, setConfig] = useState(defaultConfig);
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [showManualMeta, setShowManualMeta] = useState(() => !META_TYPES.includes(defaultType ?? "youtube"));
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = editId !== undefined;
+  const isMetaType = META_TYPES.includes(type);
+  const dialogTitle = isEdit ? `Edit ${type[0].toUpperCase()}${type.slice(1)} Platform` : "Add Platform";
+
+  const oauthLabel = useMemo(() => {
+    if (type === "instagram") return isEdit ? "Reconnect Instagram with Meta" : "Connect Instagram with Meta";
+    if (type === "facebook") return isEdit ? "Reconnect Facebook with Meta" : "Connect Facebook with Meta";
+    return "Connect with OAuth";
+  }, [isEdit, type]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    // Validate JSON
     let parsedCreds: Record<string, unknown>;
     let parsedConfig: Record<string, unknown>;
     try {
@@ -88,30 +99,42 @@ export default function PlatformForm({
     }
   }
 
+  function handleMetaConnect() {
+    setOauthLoading(true);
+    const params = new URLSearchParams({ tenant_id: tenantId, type });
+    window.location.href = `/api/platforms/meta/start?${params.toString()}`;
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 px-4 py-6 backdrop-blur-sm sm:flex sm:items-center sm:justify-center">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-lg space-y-4 rounded-lg border border-white/10 bg-zinc-900 p-6 shadow-xl"
+        className="mx-auto w-full max-w-2xl space-y-4 rounded-xl border border-white/10 bg-zinc-900 p-5 shadow-xl sm:p-6"
       >
-        <h2 className="text-lg font-semibold text-white">
-          {isEdit ? "Edit Platform" : "Add Platform"}
-        </h2>
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold text-white">{dialogTitle}</h2>
+          <p className="text-sm text-zinc-400">
+            {isMetaType
+              ? "Use Meta login for the normal setup flow. Manual JSON is still here for recovery and advanced cases."
+              : "Add platform credentials and config."}
+          </p>
+        </div>
 
         {error && (
-          <div className="rounded-md bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">
+          <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {error}
           </div>
         )}
 
-        {/* Platform Type */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium text-zinc-300">
-            Platform Type
-          </label>
+          <label className="text-sm font-medium text-zinc-300">Platform Type</label>
           <select
             value={type}
-            onChange={(e) => setType(e.target.value as PlatformType)}
+            onChange={(e) => {
+              const nextType = e.target.value as PlatformType;
+              setType(nextType);
+              setShowManualMeta(!META_TYPES.includes(nextType));
+            }}
             disabled={isEdit}
             className="w-full rounded-md border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white outline-none focus:border-orange-500 disabled:opacity-50"
           >
@@ -123,53 +146,94 @@ export default function PlatformForm({
           </select>
         </div>
 
-        {/* Credentials */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-zinc-300">
-            Credentials (JSON)
-          </label>
-          <textarea
-            value={credentials}
-            onChange={(e) => setCredentials(e.target.value)}
-            rows={5}
-            placeholder='{"access_token": "...", "refresh_token": "..."}'
-            className="w-full rounded-md border border-white/10 bg-zinc-800 px-3 py-2 font-mono text-sm text-white outline-none focus:border-orange-500"
-          />
-        </div>
+        {isMetaType && (
+          <div className="rounded-xl border border-orange-500/20 bg-gradient-to-br from-zinc-950 via-zinc-900 to-orange-950/30 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-white">Meta login is the primary setup path</p>
+                <p className="text-sm text-zinc-300">
+                  We&apos;ll open Meta, ask for page access, then save the page token and account details back to this tenant.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleMetaConnect}
+                disabled={oauthLoading}
+                className="inline-flex min-h-11 items-center justify-center rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-500 disabled:opacity-50"
+              >
+                {oauthLoading ? "Redirecting…" : oauthLabel}
+              </button>
+            </div>
 
-        {/* Config */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-zinc-300">
-            Config (JSON)
-          </label>
-          <textarea
-            value={config}
-            onChange={(e) => setConfig(e.target.value)}
-            rows={3}
-            placeholder='{"channel_id": "...", "default_privacy": "public"}'
-            className="w-full rounded-md border border-white/10 bg-zinc-800 px-3 py-2 font-mono text-sm text-white outline-none focus:border-orange-500"
-          />
-        </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+              {type === "instagram"
+                ? "The app will connect the first Facebook page in this Meta login that has an attached Instagram business account."
+                : "The app will connect the first Facebook page available in this Meta login."}
+            </div>
+          </div>
+        )}
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-3 pt-2">
+        {(!isMetaType || showManualMeta) && (
+          <div className="grid gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-sm font-medium text-zinc-300">Credentials (JSON)</label>
+                {isMetaType && (
+                  <button
+                    type="button"
+                    onClick={() => setShowManualMeta(false)}
+                    className="text-xs text-orange-300 hover:text-orange-200"
+                  >
+                    Hide manual fallback
+                  </button>
+                )}
+              </div>
+              <textarea
+                value={credentials}
+                onChange={(e) => setCredentials(e.target.value)}
+                rows={6}
+                placeholder='{"access_token": "...", "refresh_token": "..."}'
+                className="w-full rounded-md border border-white/10 bg-zinc-800 px-3 py-2 font-mono text-sm text-white outline-none focus:border-orange-500"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-zinc-300">Config (JSON)</label>
+              <textarea
+                value={config}
+                onChange={(e) => setConfig(e.target.value)}
+                rows={4}
+                placeholder='{"channel_id": "...", "default_privacy": "public"}'
+                className="w-full rounded-md border border-white/10 bg-zinc-800 px-3 py-2 font-mono text-sm text-white outline-none focus:border-orange-500"
+              />
+            </div>
+          </div>
+        )}
+
+        {isMetaType && !showManualMeta && (
+          <button
+            type="button"
+            onClick={() => setShowManualMeta(true)}
+            className="text-sm text-zinc-400 hover:text-white"
+          >
+            Need the advanced fallback? Edit JSON manually instead.
+          </button>
+        )}
+
+        <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:items-center sm:justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
+            className="rounded-md px-4 py-2 text-sm text-zinc-400 transition-colors hover:text-white"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition-colors disabled:opacity-50"
+            className="rounded-md bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-500 disabled:opacity-50"
           >
-            {loading
-              ? "Saving…"
-              : isEdit
-              ? "Update Platform"
-              : "Add Platform"}
+            {loading ? "Saving…" : isEdit ? "Update Platform" : "Add Platform"}
           </button>
         </div>
       </form>

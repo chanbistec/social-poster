@@ -8,8 +8,11 @@
 
 import { google } from 'googleapis';
 import db from '@/lib/db';
-import fs from 'fs';
-import path from 'path';
+import {
+  fetchMetaPages,
+  pickMetaAccount,
+  resolveMetaAppCredentials,
+} from '@/lib/meta-oauth';
 
 // ── Types ──
 
@@ -26,12 +29,10 @@ interface MetaCredentials {
   page_id?: string;
   app_id?: string;
   app_secret?: string;
+  user_token?: string;
+  ig_account_id?: string;
+  instagram_business_account_id?: string;
   [key: string]: unknown;
-}
-
-interface MetaAppCredentials {
-  app_id: string;
-  app_secret: string;
 }
 
 interface MetaTokenResponse {
@@ -118,40 +119,6 @@ export async function refreshMetaLongLivedToken(
 
 // ── Helpers ──
 
-const META_CREDENTIALS_PATH = path.join(
-  process.env.HOME || '/root',
-  '.openclaw',
-  'credentials',
-  'meta-credentials.json',
-);
-
-/**
- * Resolve Meta app credentials from platform credentials or fallback file.
- */
-function resolveMetaAppCredentials(
-  creds: MetaCredentials,
-): MetaAppCredentials {
-  if (creds.app_id && creds.app_secret) {
-    return { app_id: creds.app_id, app_secret: creds.app_secret };
-  }
-
-  // Fallback: load from credentials file
-  try {
-    const raw = fs.readFileSync(META_CREDENTIALS_PATH, 'utf-8');
-    const file = JSON.parse(raw) as MetaAppCredentials;
-    if (file.app_id && file.app_secret) {
-      return file;
-    }
-  } catch {
-    // File missing or invalid — fall through
-  }
-
-  throw new Error(
-    'Meta app_id/app_secret not found in platform credentials or ' +
-      META_CREDENTIALS_PATH,
-  );
-}
-
 function isTokenExpiringSoon(expiresAt: string | null): boolean {
   if (!expiresAt) return true; // No expiry recorded → assume stale
   const margin = 10 * 60 * 1000; // 10 minutes
@@ -204,24 +171,40 @@ export async function ensureFreshToken(
       const metaCreds = creds as unknown as MetaCredentials;
       const appCreds = resolveMetaAppCredentials(metaCreds);
 
-      if (!metaCreds.page_token) {
-        throw new Error(`${platform.type} platform missing page_token — manual re-auth required`);
+      if (!metaCreds.user_token && !metaCreds.page_token) {
+        throw new Error(`${platform.type} platform missing Meta token data — manual re-auth required`);
       }
 
       try {
-        const refreshed = await refreshMetaLongLivedToken(
-          metaCreds.page_token,
+        const refreshedUserToken = await refreshMetaLongLivedToken(
+          String(metaCreds.user_token || metaCreds.page_token),
           appCreds.app_id,
           appCreds.app_secret,
         );
+        const pages = await fetchMetaPages(refreshedUserToken.access_token);
+        const page = pickMetaAccount(
+          pages,
+          platform.type as 'facebook' | 'instagram',
+        );
+
         updatedCreds = {
           ...creds,
-          page_token: refreshed.access_token,
+          page_token: page.access_token,
+          page_id: page.id,
+          page_name: page.name,
+          user_token: refreshedUserToken.access_token,
           app_id: appCreds.app_id,
           app_secret: appCreds.app_secret,
+          ...(platform.type === 'instagram'
+            ? {
+                ig_account_id: page.instagram_business_account?.id,
+                instagram_business_account_id: page.instagram_business_account?.id,
+                instagram_username: page.instagram_business_account?.username,
+              }
+            : {}),
         };
         newExpiresAt = new Date(
-          Date.now() + refreshed.expires_in * 1000,
+          Date.now() + refreshedUserToken.expires_in * 1000,
         ).toISOString();
       } catch (err) {
         throw new Error(

@@ -16,7 +16,7 @@ async function auth() {
 
 /** GET /api/platforms — list platforms, optional ?tenant_id filter */
 export async function GET(req: NextRequest) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const tenantId = req.nextUrl.searchParams.get('tenant_id');
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/platforms — add a platform to a tenant */
 export async function POST(req: NextRequest) {
-  const user = auth();
+  const user = await auth();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json().catch(() => null);
