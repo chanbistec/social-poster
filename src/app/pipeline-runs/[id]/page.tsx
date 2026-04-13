@@ -1,3 +1,4 @@
+import path from "node:path";
 import db from "@/lib/db";
 import type { PipelineRunStatus } from "@/lib/types";
 import RunActions from "./run-actions";
@@ -131,7 +132,7 @@ export default async function PipelineRunDetailPage({
                 {outputPaths.map((filePath, i) => {
                   const filename = filePath.split("/").pop() ?? filePath;
                   const isVideo = /\.(mp4|webm|mov)$/i.test(filename);
-                  const mediaUrl = `/api/media/pipeline-runs/${id}/${filename}`;
+                  const mediaUrl = buildMediaUrl(filePath, Number(id));
 
                   return isVideo ? (
                     <div key={i} className="overflow-hidden rounded-lg border border-white/10">
@@ -387,6 +388,39 @@ function StatusBanner({ status }: { status: PipelineRunStatus }) {
 
   const c = config[status] ?? config.pending;
   return <div className={`w-full rounded-lg ${c.bg} px-4 py-3 text-center text-sm font-medium ${c.text} ${status === "generating" ? "animate-pulse" : ""}`}>{c.label}</div>;
+}
+
+function buildMediaUrl(filePath: string, runId: number) {
+  const normalized = filePath.replace(/\\/g, "/");
+  const pipelineRunsMarker = "/data/pipeline-runs/";
+  const mediaMarker = "/data/media/";
+  const brandingMarker = "/data/branding/";
+
+  if (normalized.includes(pipelineRunsMarker)) {
+    const relative = normalized.split(pipelineRunsMarker)[1];
+    return `/api/media/pipeline-runs/${encodeURI(relative)}`;
+  }
+
+  if (normalized.includes(mediaMarker)) {
+    const relative = normalized.split(mediaMarker)[1];
+    return `/api/media/${encodeURI(relative)}`;
+  }
+
+  if (normalized.includes(brandingMarker)) {
+    const relative = normalized.split("/data/")[1];
+    return `/api/media/${encodeURI(relative)}`;
+  }
+
+  if (normalized.startsWith("pipeline-runs/") || normalized.startsWith("branding/")) {
+    return `/api/media/${encodeURI(normalized)}`;
+  }
+
+  if (!path.isAbsolute(filePath)) {
+    return `/api/media/${encodeURI(normalized)}`;
+  }
+
+  const filename = normalized.split("/").pop() ?? normalized;
+  return `/api/media/pipeline-runs/${runId}/${encodeURIComponent(filename)}`;
 }
 
 function dotTone(tone: TimelineEvent["tone"]) {
