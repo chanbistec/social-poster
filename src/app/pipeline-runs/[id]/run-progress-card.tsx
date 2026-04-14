@@ -131,6 +131,7 @@ export default function RunProgressCard({
                   {step.description ? <p className="mt-1 text-sm text-zinc-400">{step.description}</p> : null}
                   {step.summary ? <p className="mt-2 text-sm text-zinc-300">{step.summary}</p> : null}
                   {step.error ? <p className="mt-2 text-sm text-red-300">{step.error}</p> : null}
+                  <StepArtifacts step={step} />
                 </div>
               </div>
 
@@ -254,4 +255,135 @@ function formatDate(value?: string) {
   } catch {
     return value;
   }
+}
+
+function StepArtifacts({ step }: { step: StepItem }) {
+  const links = getStepLinks(step);
+  const facts = getStepFacts(step);
+
+  if (links.length === 0 && facts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 space-y-3">
+      {facts.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {facts.map((fact) => (
+            <span
+              key={`${step.key}-${fact.label}-${fact.value}`}
+              className="rounded-full border border-white/10 bg-zinc-950 px-2.5 py-1 text-[11px] text-zinc-300"
+            >
+              <span className="text-zinc-500">{fact.label}:</span> {fact.value}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {links.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {links.map((link) => (
+            <a
+              key={`${step.key}-${link.label}-${link.href}`}
+              href={link.href}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center rounded-full border border-orange-500/20 bg-orange-500/10 px-2.5 py-1 text-[11px] font-medium text-orange-200 transition-colors hover:border-orange-400/40 hover:bg-orange-500/15"
+            >
+              {link.label} ↗
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function getStepLinks(step: StepItem): Array<{ label: string; href: string }> {
+  const result = asRecord(step.result);
+  if (!result) return [];
+
+  const links: Array<{ label: string; href: string }> = [];
+  addLink(links, "Open video", result.external_url);
+  addLink(links, "Open playlist", result.playlistUrl);
+
+  return links;
+}
+
+function getStepFacts(step: StepItem): Array<{ label: string; value: string }> {
+  const result = asRecord(step.result);
+  if (!result) return [];
+
+  const facts: Array<{ label: string; value: string }> = [];
+
+  addFact(facts, "Video ID", result.external_id);
+  addFact(facts, "Playlist ID", result.playlistId);
+  addFact(facts, "Playlist item", result.itemId);
+  addFact(facts, "Message ID", result.externalId);
+  addFact(facts, "Duration", formatDuration(result.duration));
+  addFact(facts, "Scenes", formatCount(result.imagePaths, "scene"));
+  addFact(facts, "Images", formatCount(result.imagePaths, "image"));
+  addFact(facts, "Prompts", formatCount(result.prompts, "prompt"));
+  addFact(facts, "Renderer", typeof result.source === "string" ? result.source : undefined);
+  addFact(facts, "Audio", fileName(result.wavPath));
+  addFact(facts, "Video file", fileName(result.videoPath));
+  addFact(facts, "Image file", fileName(result.imagePath));
+
+  if (typeof result.output === "string" && result.output.trim()) {
+    const firstLine = result.output.trim().split(/\r?\n/)[0];
+    addFact(facts, "Output", truncate(firstLine, 80));
+  }
+
+  return dedupeFacts(facts);
+}
+
+function addLink(target: Array<{ label: string; href: string }>, label: string, href: unknown) {
+  if (typeof href !== "string" || !href.trim()) return;
+  target.push({ label, href: href.trim() });
+}
+
+function addFact(target: Array<{ label: string; value: string }>, label: string, value: string | undefined) {
+  if (!value) return;
+  target.push({ label, value });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function fileName(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const normalized = value.replace(/\\/g, "/");
+  return normalized.split("/").pop() || normalized;
+}
+
+function formatDuration(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (value >= 60) {
+    const minutes = Math.floor(value / 60);
+    const seconds = Math.round(value % 60)
+      .toString()
+      .padStart(2, "0");
+    return `${minutes}:${seconds}`;
+  }
+  return `${value.toFixed(1)}s`;
+}
+
+function formatCount(value: unknown, noun: string) {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return `${value.length} ${noun}${value.length === 1 ? "" : "s"}`;
+}
+
+function truncate(value: string, max: number) {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function dedupeFacts(facts: Array<{ label: string; value: string }>) {
+  const seen = new Set<string>();
+  return facts.filter((fact) => {
+    const key = `${fact.label}:${fact.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
