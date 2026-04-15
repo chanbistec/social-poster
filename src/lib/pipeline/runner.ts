@@ -282,9 +282,7 @@ function createInitialStepResults(template: Pick<PipelineTemplate, 'type' | 'ste
 }
 
 function persistStepResults(runId: number, stepResults: Record<string, unknown>) {
-  updateRunStatus(runId, 'generating', {
-    step_results: JSON.stringify(stepResults),
-  });
+  db.prepare('UPDATE pipeline_runs SET step_results = ? WHERE id = ?').run(JSON.stringify(stepResults), runId);
 }
 
 function setStepRunning(runId: number, stepResults: Record<PipelineStepKey, PipelineStepResult>, key: PipelineStepKey) {
@@ -331,6 +329,19 @@ function setStepFailed(
   persistStepResults(runId, stepResults);
 }
 
+function setStepSummary(
+  runId: number,
+  stepResults: Record<PipelineStepKey, PipelineStepResult>,
+  key: PipelineStepKey,
+  summary: string,
+) {
+  stepResults[key] = {
+    ...stepResults[key],
+    summary,
+  };
+  persistStepResults(runId, stepResults);
+}
+
 function summarizeNarration(result: { duration: number }) {
   return `${result.duration.toFixed(1)}s voice-over ready`;
 }
@@ -347,6 +358,31 @@ function summarizeVideo(result: { duration: number }) {
 
 function summarizeSocialImage(result: { width: number; height: number }) {
   return `${result.width}×${result.height} social image ready`;
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes < 0) return undefined;
+  if (bytes < 1024) return `${bytes} B`;
+
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function formatByteProgress(uploadedBytes: number, totalBytes?: number | null) {
+  const uploaded = formatBytes(uploadedBytes);
+  if (!uploaded) return undefined;
+
+  const total = totalBytes != null ? formatBytes(totalBytes) : undefined;
+  return total ? `${uploaded} / ${total}` : uploaded;
 }
 
 function buildCaption(input: RunInput) {
@@ -771,6 +807,13 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
           {
             category: categoryId,
             title: input.title,
+            onProgress: ({ uploadedBytes, totalBytes, percent }) => {
+              const parts = [
+                percent !== null ? `${percent}% uploaded` : 'Uploading to YouTube',
+                formatByteProgress(uploadedBytes, totalBytes),
+              ].filter(Boolean);
+              setStepSummary(runId, stepResults, 'uploadVideo', parts.join(' · '));
+            },
           },
         );
 

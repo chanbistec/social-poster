@@ -18,11 +18,18 @@ export interface YouTubePublishResult {
   error?: string;
 }
 
+export interface YouTubeUploadProgress {
+  uploadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
 export interface YouTubePublishOptions {
   privacy?: 'public' | 'private' | 'unlisted';
   category?: string;
   title?: string;
   description?: string;
+  onProgress?: (progress: YouTubeUploadProgress) => void;
 }
 
 function createYouTubeClient(credentials: YouTubeCredentials) {
@@ -97,24 +104,51 @@ export async function publishToYouTube(
       }
     }
 
-    const response = await youtube.videos.insert({
-      part: ['snippet', 'status'],
-      requestBody: {
-        snippet: {
-          title,
-          description,
-          tags,
-          categoryId: options.category,
+    const mediaStats = await stat(media_path);
+    let lastReportedPercent: number | null = null;
+
+    const response = await youtube.videos.insert(
+      {
+        part: ['snippet', 'status'],
+        requestBody: {
+          snippet: {
+            title,
+            description,
+            tags,
+            categoryId: options.category,
+          },
+          status: {
+            privacyStatus: privacy,
+            selfDeclaredMadeForKids: false,
+          },
         },
-        status: {
-          privacyStatus: privacy,
-          selfDeclaredMadeForKids: false,
+        media: {
+          body: createReadStream(media_path),
         },
       },
-      media: {
-        body: createReadStream(media_path),
+      {
+        onUploadProgress: (event) => {
+          if (!options.onProgress) return;
+
+          const uploadedBytes = Math.max(0, Number(event.bytesRead ?? 0));
+          const totalBytes = Number.isFinite(mediaStats.size) ? mediaStats.size : null;
+          const percent = totalBytes && totalBytes > 0
+            ? Math.min(100, Math.max(0, Math.round((uploadedBytes / totalBytes) * 100)))
+            : null;
+
+          if (percent !== null && percent === lastReportedPercent && uploadedBytes < mediaStats.size) {
+            return;
+          }
+
+          lastReportedPercent = percent;
+          options.onProgress({
+            uploadedBytes,
+            totalBytes,
+            percent,
+          });
+        },
       },
-    });
+    );
 
     const videoId = response.data.id;
     if (!videoId) {
