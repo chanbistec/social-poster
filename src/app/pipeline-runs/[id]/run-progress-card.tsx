@@ -24,6 +24,7 @@ type RunSnapshot = {
   output_paths: string[] | null;
   error: string | null;
   completed_at: string | null;
+  updated_at?: string | null;
 };
 
 const ACTIVE_STATUSES: PipelineRunStatus[] = ["pending", "generating", "publishing"];
@@ -37,6 +38,14 @@ export default function RunProgressCard({
 }) {
   const [run, setRun] = useState<RunSnapshot>(initialRun);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!ACTIVE_STATUSES.includes(run.status)) return;
+
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [run.status]);
 
   useEffect(() => {
     if (!ACTIVE_STATUSES.includes(run.status)) return;
@@ -72,8 +81,14 @@ export default function RunProgressCard({
 
   const steps = useMemo(() => normalizeStepResults(run.step_results), [run.step_results]);
   const completedCount = steps.filter((step) => step.state === "completed").length;
-  const percent = steps.length ? Math.round((completedCount / steps.length) * 100) : 0;
   const currentStep = steps.find((step) => step.state === "running");
+  const partialStepPercent = currentStep ? extractPercent(currentStep.summary) : null;
+  const percent = steps.length
+    ? Math.round((((completedCount + ((partialStepPercent ?? 0) / 100)) / steps.length) * 100))
+    : 0;
+  const currentStage = currentStep?.summary || currentStep?.description || "Waiting for the pipeline worker to start.";
+  const activeElapsedAt = currentStep?.startedAt ?? run.completed_at ?? undefined;
+  const lastUpdatedAt = run.updated_at ?? currentStep?.completedAt ?? currentStep?.startedAt ?? undefined;
 
   return (
     <div className="rounded-2xl border border-orange-500/20 bg-zinc-950/80 p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02)] sm:p-5">
@@ -89,14 +104,22 @@ export default function RunProgressCard({
               ? "Everything is ready for review."
               : run.status === "failed"
                 ? run.error || "The run failed before finishing all steps."
-                : currentStep?.description || "The pipeline is working through each generation step."}
+                : currentStage}
           </p>
+         <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
+            <LiveMetaPill label="Stage" value={currentStep?.label || statusLabel(run.status)} />
+            <LiveMetaPill label={run.status === "failed" || run.completed_at ? "Completed" : "Elapsed"} value={formatElapsed(activeElapsedAt, now)} />
+            <LiveMetaPill label="Last update" value={formatRelativeTime(lastUpdatedAt, now)} />
+            {partialStepPercent !== null ? <LiveMetaPill label="Current step" value={`${partialStepPercent}%`} /> : null}
+          </div>
         </div>
 
         <div className="min-w-[120px] rounded-xl border border-white/10 bg-zinc-900/80 px-4 py-3 text-left sm:text-right">
           <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">Progress</div>
           <div className="mt-1 text-2xl font-semibold text-zinc-100">{percent}%</div>
-          <div className="text-xs text-zinc-500">{completedCount}/{steps.length || 0} steps done</div>
+          <div className="text-xs text-zinc-500">
+            {completedCount}/{steps.length || 0} steps done{partialStepPercent !== null ? ` · ${currentStep?.label || "Current step"} ${partialStepPercent}%` : ""}
+          </div>
         </div>
       </div>
 
@@ -216,6 +239,77 @@ function statusHeadline(status: PipelineRunStatus, currentStep?: string) {
     default:
       return currentStep ? `${currentStep} in progress` : "Starting pipeline run";
   }
+}
+
+function LiveMetaPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-full border border-white/10 bg-zinc-900/80 px-2.5 py-1">
+      <span className="text-zinc-500">{label}:</span> {value}
+    </span>
+  );
+}
+
+function extractPercent(summary?: string) {
+  if (!summary) return null;
+  const match = summary.match(/(\d{1,3})%/);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return Math.min(100, Math.max(0, value));
+}
+
+function statusLabel(status: PipelineRunStatus) {
+  switch (status) {
+    case "pending":
+      return "Queued";
+    case "generating":
+      return "Generating";
+    case "publishing":
+      return "Publishing";
+    case "preview":
+      return "Ready for review";
+    case "approved":
+      return "Approved";
+    case "published":
+      return "Published";
+    case "failed":
+      return "Failed";
+    default:
+      return titleCase(String(status));
+  }
+}
+
+function formatElapsed(value: string | undefined, now: number) {
+  if (!value) return "Just now";
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "Just now";
+
+  const totalSeconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function formatRelativeTime(value: string | undefined, now: number) {
+  if (!value) return "Waiting";
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return formatDate(value);
+
+  const diffSeconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  if (diffSeconds < 5) return "Just now";
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+
+  return formatDate(value);
 }
 
 function badgeTone(state: StepState) {
