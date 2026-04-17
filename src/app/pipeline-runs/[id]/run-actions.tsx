@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { PipelineRunStatus } from "@/lib/types";
 
 interface RunActionsProps {
@@ -13,6 +13,7 @@ interface RunActionsProps {
 
 export default function RunActions({ runId, status, templateId, hasFailedPlatforms = false }: RunActionsProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +23,9 @@ export default function RunActions({ runId, status, templateId, hasFailedPlatfor
 
     try {
       if (action === "retry") {
-        router.push(`/pipelines/${templateId}/run`);
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("from_run", String(runId));
+        router.push(`/pipelines/${templateId}/run?${params.toString()}`);
         return;
       }
 

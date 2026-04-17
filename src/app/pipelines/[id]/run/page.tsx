@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useState, useEffect, useMemo } from "react";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import MediaUpload from "@/components/media-upload";
 
 const CATEGORIES = [
@@ -40,9 +40,19 @@ function getCustomStepConfig(template: TemplateInfo | null, type: string) {
   return steps.find((step) => step.type === type)?.config ?? {};
 }
 
+type PreviousRunInput = {
+  title?: string;
+  tip?: string;
+  category?: string;
+  hashtags?: string[];
+  highlight?: string;
+  mediaPath?: string;
+};
+
 export default function PipelineRunPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const id = params.id;
 
   const [template, setTemplate] = useState<TemplateInfo | null>(null);
@@ -56,6 +66,9 @@ export default function PipelineRunPage() {
   const [hashtags, setHashtags] = useState("");
   const [highlight, setHighlight] = useState("");
   const [mediaPath, setMediaPath] = useState<string | null>(null);
+  const [prefillLoaded, setPrefillLoaded] = useState(false);
+
+  const fromRunId = useMemo(() => searchParams.get("from_run"), [searchParams]);
 
   const isCustom = template?.type === "custom";
   const uploadConfig = getCustomStepConfig(template, "upload_video");
@@ -75,6 +88,42 @@ export default function PipelineRunPage() {
       .catch(() => setError("Failed to load template"))
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    if (!fromRunId) {
+      setPrefillLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    fetch(`/api/pipeline-runs/${fromRunId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        const input = (res.data?.input_params || {}) as PreviousRunInput;
+        setTitle(typeof input.title === "string" ? input.title : "");
+        setTip(typeof input.tip === "string" ? input.tip : "");
+        setCategory(typeof input.category === "string" && input.category.trim() ? input.category : CATEGORIES[0]);
+        setHashtags(Array.isArray(input.hashtags) ? input.hashtags.join(", ") : "");
+        setHighlight(typeof input.highlight === "string" ? input.highlight : "");
+        setMediaPath(typeof input.mediaPath === "string" ? input.mediaPath : null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Failed to preload the previous run");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPrefillLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fromRunId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -279,9 +328,21 @@ export default function PipelineRunPage() {
               <p className="text-xs text-zinc-500">
                 Upload a finished MP4/MOV/WebM file. The pipeline will publish it to YouTube and place it into the selected playlist.
               </p>
+              {fromRunId && !prefillLoaded ? (
+                <div className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+                  Loading previous run details...
+                </div>
+              ) : null}
               {mediaPath ? (
-                <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
-                  Ready: {mediaPath}
+                <div className="space-y-2">
+                  <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+                    Ready: {mediaPath}
+                  </div>
+                  {fromRunId ? (
+                    <p className="text-[11px] text-zinc-500">
+                      Reusing the previous academy upload until you replace it with a new file.
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>

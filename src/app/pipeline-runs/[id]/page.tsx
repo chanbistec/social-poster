@@ -108,6 +108,9 @@ export default async function PipelineRunDetailPage({
               {Boolean(inputParams.highlight) && (
                 <ParamRow label="Highlight" value={String(inputParams.highlight)} />
               )}
+              {Boolean(inputParams.mediaPath) && (
+                <ParamRow label="Academy video" value={String(inputParams.mediaPath)} />
+              )}
             </div>
           </div>
 
