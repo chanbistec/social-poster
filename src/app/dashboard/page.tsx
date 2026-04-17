@@ -1,5 +1,5 @@
 import Link from "next/link";
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 import db from "@/lib/db";
 import { ApproveButton, RejectButton } from "./approval-actions";
 
@@ -54,6 +54,23 @@ type PipelineRunRow = {
   created_at: string;
   template_name: string | null;
   tenant_name: string | null;
+};
+type PublishAnalyticsRow = {
+  attempts: number;
+  successes: number;
+  failures: number;
+};
+type ActivityRow = {
+  day: string;
+  attempts: number;
+  successes: number;
+  failures: number;
+};
+type PlatformBreakdownRow = {
+  platform: string;
+  attempts: number;
+  successes: number;
+  failures: number;
 };
 
 export default async function DashboardPage({
@@ -230,8 +247,75 @@ export default async function DashboardPage({
     )
     .all(...pipelineTenantArgs) as PipelineRunRow[];
 
+  const totalPublished = db
+    .prepare(
+      `SELECT COUNT(*) as count
+       FROM posts p
+       ${tenantFilter ? "WHERE p.tenant_id = ? AND" : "WHERE"} p.status = 'published'`
+    )
+    .get(...postTenantArgs) as CountRow;
+
+  const publishAnalytics = db
+    .prepare(
+      `SELECT
+          COUNT(*) as attempts,
+          SUM(CASE WHEN pr.status = 'success' THEN 1 ELSE 0 END) as successes,
+          SUM(CASE WHEN pr.status = 'failed' THEN 1 ELSE 0 END) as failures
+       FROM publish_results pr
+       JOIN posts p ON p.id = pr.post_id
+       ${postTenantClause}`
+    )
+    .get(...postTenantArgs) as PublishAnalyticsRow;
+
+  const recentActivity = db
+    .prepare(
+      `SELECT
+          date(COALESCE(pr.published_at, p.updated_at, p.created_at)) as day,
+          COUNT(*) as attempts,
+          SUM(CASE WHEN pr.status = 'success' THEN 1 ELSE 0 END) as successes,
+          SUM(CASE WHEN pr.status = 'failed' THEN 1 ELSE 0 END) as failures
+       FROM publish_results pr
+       JOIN posts p ON p.id = pr.post_id
+       WHERE date(COALESCE(pr.published_at, p.updated_at, p.created_at)) >= date('now', '-6 days')
+         ${tenantFilter ? "AND p.tenant_id = ?" : ""}
+       GROUP BY date(COALESCE(pr.published_at, p.updated_at, p.created_at))
+       ORDER BY day ASC`
+    )
+    .all(...postTenantArgs) as ActivityRow[];
+
+  const platformBreakdown = db
+    .prepare(
+      `WITH platform_types AS (
+         SELECT DISTINCT pl.type as platform
+         FROM platforms pl
+         ${tenantFilter ? "WHERE pl.tenant_id = ?" : ""}
+         UNION
+         SELECT DISTINCT pr.platform as platform
+         FROM publish_results pr
+         JOIN posts p ON p.id = pr.post_id
+         ${tenantFilter ? "WHERE p.tenant_id = ?" : ""}
+       )
+       SELECT
+         pt.platform,
+         COUNT(pr.id) as attempts,
+         SUM(CASE WHEN pr.status = 'success' THEN 1 ELSE 0 END) as successes,
+         SUM(CASE WHEN pr.status = 'failed' THEN 1 ELSE 0 END) as failures
+       FROM platform_types pt
+       LEFT JOIN publish_results pr ON pr.platform = pt.platform
+       LEFT JOIN posts p ON p.id = pr.post_id ${tenantFilter ? "AND p.tenant_id = ?" : ""}
+       GROUP BY pt.platform
+       ORDER BY attempts DESC, pt.platform ASC`
+    )
+    .all(...(tenantFilter ? [tenantFilter, tenantFilter, tenantFilter] : [])) as PlatformBreakdownRow[];
+
   const postCounts = toCountMap(postStatusSummary);
   const runCounts = toCountMap(runStatusSummary);
+  const publishAttempts = publishAnalytics.attempts ?? 0;
+  const publishSuccesses = publishAnalytics.successes ?? 0;
+  const publishFailures = publishAnalytics.failures ?? 0;
+  const publishSuccessRate = publishAttempts > 0 ? Math.round((publishSuccesses / publishAttempts) * 100) : 0;
+  const recentActivitySeries = buildRecentActivitySeries(recentActivity);
+  const maxActivityAttempts = recentActivitySeries.reduce((max, day) => Math.max(max, day.attempts), 0);
 
   return (
     <div className="space-y-6">
@@ -271,6 +355,108 @@ export default async function DashboardPage({
         <StatCard title="Due To Publish" value={overdueScheduled.count} highlight={overdueScheduled.count > 0} tone={overdueScheduled.count > 0 ? "amber" : "default"} />
         <StatCard title="Publishing Now" value={postCounts.publishing ?? 0} highlight={(postCounts.publishing ?? 0) > 0} tone={(postCounts.publishing ?? 0) > 0 ? "blue" : "default"} />
         <StatCard title="Active Pipeline Runs" value={activeRuns.count} highlight={activeRuns.count > 0} tone={activeRuns.count > 0 ? "blue" : "default"} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+        <AnalyticsCard
+          title="Published posts"
+          value={formatNumber(totalPublished.count)}
+          subtitle="Posts that reached published status"
+        />
+        <AnalyticsCard
+          title="Publish success rate"
+          value={`${publishSuccessRate}%`}
+          subtitle={publishAttempts > 0 ? `${formatNumber(publishSuccesses)} of ${formatNumber(publishAttempts)} attempts succeeded` : "No publish attempts yet"}
+          accent
+        />
+        <AnalyticsCard
+          title="Publish attempts"
+          value={formatNumber(publishAttempts)}
+          subtitle="All recorded platform publish attempts"
+        />
+        <AnalyticsCard
+          title="Publish failures"
+          value={formatNumber(publishFailures)}
+          subtitle={publishAttempts > 0 ? `${Math.round((publishFailures / publishAttempts) * 100)}% of attempts failed` : "No failed attempts recorded"}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-medium text-zinc-200">Recent activity</h3>
+              <p className="text-xs text-zinc-500">Last 7 days of publish attempts, successes, and failures.</p>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+              <LegendDot className="bg-orange-500" label="Attempts" />
+              <LegendDot className="bg-emerald-400" label="Successes" />
+              <LegendDot className="bg-red-400" label="Failures" />
+            </div>
+          </div>
+
+          {publishAttempts === 0 ? (
+            <EmptyPanel message="No publish history yet. Activity will appear here after your first publish attempt." />
+          ) : (
+            <div className="grid grid-cols-7 gap-2 sm:gap-3">
+              {recentActivitySeries.map((day) => {
+                const attemptHeight = getBarHeight(day.attempts, maxActivityAttempts);
+                const successHeight = getBarHeight(day.successes, maxActivityAttempts);
+                const failureHeight = getBarHeight(day.failures, maxActivityAttempts);
+
+                return (
+                  <div key={day.day} className="rounded-md border border-white/5 bg-zinc-950/50 px-2 py-3">
+                    <div className="flex h-32 items-end justify-center gap-1">
+                      <Bar height={attemptHeight} className="bg-orange-500/90" />
+                      <Bar height={successHeight} className="bg-emerald-400/90" />
+                      <Bar height={failureHeight} className="bg-red-400/90" />
+                    </div>
+                    <div className="mt-3 text-center">
+                      <div className="text-[11px] font-medium text-zinc-200">{formatDayLabel(day.day)}</div>
+                      <div className="mt-1 text-[10px] text-zinc-500">{day.attempts} attempts</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-4">
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-zinc-200">Platform breakdown</h3>
+            <p className="text-xs text-zinc-500">Attempts and reliability by platform for the current filter.</p>
+          </div>
+
+          {platformBreakdown.length === 0 ? (
+            <EmptyPanel message="No platform publish data yet. Connect a platform and publish a post to populate analytics." />
+          ) : (
+            <div className="space-y-3">
+              {platformBreakdown.map((row) => {
+                const rate = row.attempts > 0 ? Math.round((row.successes / row.attempts) * 100) : 0;
+                return (
+                  <div key={row.platform} className="rounded-md border border-white/10 bg-zinc-950/50 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-medium capitalize text-zinc-100">{row.platform}</div>
+                        <div className="mt-1 text-[11px] text-zinc-500">
+                          {formatNumber(row.attempts)} attempts, {formatNumber(row.successes)} success, {formatNumber(row.failures)} failed
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-semibold text-orange-400">{rate}%</div>
+                        <div className="text-[10px] text-zinc-500">success rate</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
+                      <div className="h-full rounded-full bg-orange-500/90" style={{ width: `${rate}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -496,10 +682,6 @@ export default async function DashboardPage({
   );
 }
 
-/**
- * Inline script component to handle tenant filter navigation without a client component.
- * Attaches an onchange listener to the select element.
- */
 function TenantFilterScript() {
   return (
     <script
@@ -546,6 +728,26 @@ function StatCard({
   );
 }
 
+function AnalyticsCard({
+  title,
+  value,
+  subtitle,
+  accent,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className={`rounded-lg border p-4 ${accent ? "border-orange-500/20 bg-orange-500/5" : "border-white/10 bg-zinc-900/60"}`}>
+      <p className="text-xs text-zinc-400">{title}</p>
+      <p className={`mt-2 text-2xl font-semibold ${accent ? "text-orange-400" : "text-white"}`}>{value}</p>
+      <p className="mt-1 text-xs text-zinc-500">{subtitle}</p>
+    </div>
+  );
+}
+
 function MiniStat({
   label,
   value,
@@ -568,6 +770,27 @@ function MiniStat({
       <div className={`mt-1 text-lg font-semibold ${tones[tone]}`}>{value}</div>
     </div>
   );
+}
+
+function EmptyPanel({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-zinc-950/40 px-4 py-8 text-center text-sm text-zinc-500">
+      {message}
+    </div>
+  );
+}
+
+function LegendDot({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`h-2 w-2 rounded-full ${className}`} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function Bar({ height, className }: { height: number; className: string }) {
+  return <div className={`w-2 rounded-t-sm ${className}`} style={{ height: `${height}px` }} />;
 }
 
 function HealthList({
@@ -700,4 +923,41 @@ function startedLabel(value: string | null | undefined) {
 
 function finishedLabel(value: string | null | undefined) {
   return value ? `finished ${relativeTime(value)}` : "finish unknown";
+}
+
+function buildRecentActivitySeries(rows: ActivityRow[]) {
+  const rowMap = new Map(rows.map((row) => [row.day, row]));
+  const days: ActivityRow[] = [];
+
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - offset);
+    const key = date.toISOString().slice(0, 10);
+    const existing = rowMap.get(key);
+
+    days.push({
+      day: key,
+      attempts: existing?.attempts ?? 0,
+      successes: existing?.successes ?? 0,
+      failures: existing?.failures ?? 0,
+    });
+  }
+
+  return days;
+}
+
+function getBarHeight(value: number, max: number) {
+  if (max <= 0 || value <= 0) return 6;
+  return Math.max(6, Math.round((value / max) * 96));
+}
+
+function formatDayLabel(day: string) {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "short",
+  });
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
 }
