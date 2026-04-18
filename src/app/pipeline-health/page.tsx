@@ -194,6 +194,7 @@ function PipelineHealthCard({ row }: { row: PipelineHealthRow }) {
           <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
             <span>Created {formatDateTime(row.created_at)}</span>
             {row.started_at ? <span>Started {relativeTime(row.started_at)}</span> : null}
+            {row.updated_at ? <span>Last activity {relativeTime(row.updated_at)}</span> : null}
             {row.completed_at ? <span>Completed {relativeTime(row.completed_at)}</span> : null}
             {row.total_publish_attempts > 0 ? <span>{row.total_publish_attempts} publish event{row.total_publish_attempts === 1 ? "" : "s"}</span> : null}
           </div>

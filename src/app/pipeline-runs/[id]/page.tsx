@@ -124,6 +124,7 @@ export default async function PipelineRunDetailPage({
                 output_paths: outputPaths,
                 error: errorMsg,
                 completed_at: (run.completed_at as string | null) ?? null,
+                updated_at: (run.updated_at as string | null) ?? null,
               }}
             />
           )}

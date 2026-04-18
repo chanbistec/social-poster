@@ -78,8 +78,8 @@ export async function POST(_request: NextRequest, { params }: Params) {
 
     // Update run status and link to post
     db.prepare(`
-      UPDATE pipeline_runs SET status = 'approved', post_id = ? WHERE id = ?
-    `).run(postId, runId);
+      UPDATE pipeline_runs SET status = 'approved', post_id = ?, updated_at = ? WHERE id = ?
+    `).run(postId, now, runId);
 
     return postId;
   });

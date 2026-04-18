@@ -205,6 +205,7 @@ function updateRunStatus(
     post_id?: number | null;
   },
 ) {
+  const touchedAt = new Date().toISOString();
   const fields = ['status = ?'];
   const values: unknown[] = [status];
 
@@ -232,6 +233,9 @@ function updateRunStatus(
     fields.push('post_id = ?');
     values.push(extra.post_id);
   }
+
+  fields.push('updated_at = ?');
+  values.push(touchedAt);
 
   values.push(runId);
   db.prepare(`UPDATE pipeline_runs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
@@ -282,7 +286,11 @@ function createInitialStepResults(template: Pick<PipelineTemplate, 'type' | 'ste
 }
 
 function persistStepResults(runId: number, stepResults: Record<string, unknown>) {
-  db.prepare('UPDATE pipeline_runs SET step_results = ? WHERE id = ?').run(JSON.stringify(stepResults), runId);
+  db.prepare('UPDATE pipeline_runs SET step_results = ?, updated_at = ? WHERE id = ?').run(
+    JSON.stringify(stepResults),
+    new Date().toISOString(),
+    runId,
+  );
 }
 
 function setStepRunning(runId: number, stepResults: Record<PipelineStepKey, PipelineStepResult>, key: PipelineStepKey) {
@@ -531,10 +539,10 @@ export function createPipelineRun(templateId: number, input: RunInput): number {
   const stepResults = createInitialStepResults(template);
   const result = db
     .prepare(
-      `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, started_at, created_at)
-       VALUES (?, 'generating', ?, ?, ?, ?)`,
+      `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, started_at, created_at, updated_at)
+       VALUES (?, 'generating', ?, ?, ?, ?, ?)`,
     )
-    .run(templateId, JSON.stringify(input), JSON.stringify(stepResults), now, now);
+    .run(templateId, JSON.stringify(input), JSON.stringify(stepResults), now, now, now);
 
   return Number(result.lastInsertRowid);
 }

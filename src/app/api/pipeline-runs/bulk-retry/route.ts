@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
 
     const startedAt = new Date().toISOString();
     db.prepare("UPDATE posts SET status = ?, updated_at = ? WHERE id = ?").run("publishing", startedAt, post.id);
-    db.prepare("UPDATE pipeline_runs SET status = ?, started_at = ?, completed_at = NULL, error = NULL WHERE id = ?").run("publishing", startedAt, run.id);
+    db.prepare("UPDATE pipeline_runs SET status = ?, started_at = ?, completed_at = NULL, error = NULL, updated_at = ? WHERE id = ?").run("publishing", startedAt, startedAt, run.id);
 
     const results = await publishPost(
       {
@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
     const completedAt = new Date().toISOString();
 
     db.prepare("UPDATE posts SET status = ?, updated_at = ? WHERE id = ?").run(finalStatus, completedAt, post.id);
-    db.prepare("UPDATE pipeline_runs SET status = ?, completed_at = ? WHERE id = ?").run(finalStatus, completedAt, run.id);
+    db.prepare("UPDATE pipeline_runs SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(finalStatus, completedAt, completedAt, run.id);
     processed += 1;
   }
 

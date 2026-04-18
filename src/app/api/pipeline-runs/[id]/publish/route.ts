@@ -156,7 +156,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const now = new Date().toISOString();
   db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('publishing', now, post.id);
-  db.prepare('UPDATE pipeline_runs SET status = ? WHERE id = ?').run('publishing', runId);
+  db.prepare('UPDATE pipeline_runs SET status = ?, updated_at = ? WHERE id = ?').run('publishing', now, runId);
 
   const scopedPost: PostParsed = {
     ...parsed,
@@ -203,7 +203,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const finalStatus = allLatestFailed ? 'failed' : 'published';
 
   db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), post.id);
-  db.prepare('UPDATE pipeline_runs SET status = ? WHERE id = ?').run(finalStatus, runId);
+  db.prepare('UPDATE pipeline_runs SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), runId);
 
   const updatedRun = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId);
   const updatedPost = db.prepare('SELECT * FROM posts WHERE id = ?').get(post.id);

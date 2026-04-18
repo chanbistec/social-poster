@@ -15,6 +15,7 @@ export type PipelineHealthRow = {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  updated_at: string | null;
   post_id: number | null;
   template_id: number;
   template_name: string | null;
@@ -104,6 +105,7 @@ export function getPipelineHealthRows(filters: PipelineHealthFilters = {}) {
         pr.started_at,
         pr.completed_at,
         pr.created_at,
+        pr.updated_at,
         pr.post_id,
         pr.template_id,
         pt.name as template_name,
@@ -158,7 +160,7 @@ export function getPipelineHealthRows(filters: PipelineHealthFilters = {}) {
       JOIN pipeline_templates pt ON pt.id = pr.template_id
       LEFT JOIN tenants t ON t.id = pt.tenant_id
       ${where}
-      ORDER BY COALESCE(pr.completed_at, pr.started_at, pr.created_at) DESC`
+      ORDER BY COALESCE(pr.updated_at, pr.completed_at, pr.started_at, pr.created_at) DESC`
     )
     .all(...values) as PipelineHealthRow[];
 }

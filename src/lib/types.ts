@@ -206,6 +206,7 @@ export interface PipelineRun {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface PipelineRunParsed extends Omit<PipelineRun, 'input_params' | 'step_results' | 'output_paths'> {

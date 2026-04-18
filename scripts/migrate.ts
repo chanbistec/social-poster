@@ -90,7 +90,8 @@ export function runMigrations(db: Database.Database): void {
       error         TEXT,
       started_at    TEXT,
       completed_at  TEXT,
-      created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      updated_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
     CREATE TABLE IF NOT EXISTS tenant_branding (
@@ -121,6 +122,14 @@ export function runMigrations(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status      ON pipeline_runs(status);
     CREATE INDEX IF NOT EXISTS idx_tenant_branding_tenant    ON tenant_branding(tenant_id);
   `);
+
+  const pipelineRunColumns = db.prepare("PRAGMA table_info(pipeline_runs)").all() as Array<{ name: string }>;
+  const hasPipelineRunUpdatedAt = pipelineRunColumns.some((column) => column.name === 'updated_at');
+
+  if (!hasPipelineRunUpdatedAt) {
+    db.exec(`ALTER TABLE pipeline_runs ADD COLUMN updated_at TEXT`);
+    db.exec(`UPDATE pipeline_runs SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`);
+  }
 }
 
 // Allow running directly: npx tsx scripts/migrate.ts
