@@ -14,6 +14,8 @@ type PublishResultRow = {
   status: 'pending' | 'success' | 'failed';
 };
 
+const VALID_PLATFORMS: PlatformType[] = ['youtube', 'instagram', 'facebook'];
+
 function parsePost(post: Post): PostParsed {
   return {
     ...post,
@@ -23,10 +25,8 @@ function parsePost(post: Post): PostParsed {
   };
 }
 
-function getRetryPlatforms(postId: number, requestedPlatforms: PlatformType[]) {
-  if (requestedPlatforms.length > 0) return requestedPlatforms;
-
-  const latestRows = db
+function getLatestPublishRows(postId: number) {
+  return db
     .prepare(
       `SELECT pr.id, pr.platform, pr.status
        FROM publish_results pr
@@ -36,18 +36,53 @@ function getRetryPlatforms(postId: number, requestedPlatforms: PlatformType[]) {
            FROM publish_results inner_pr
            WHERE inner_pr.post_id = ?
            GROUP BY inner_pr.platform
-         )`
+         )`,
     )
     .all(postId, postId) as PublishResultRow[];
-
-  const failedPlatforms = latestRows
-    .filter((row) => row.status === 'failed')
-    .map((row) => row.platform);
-
-  return failedPlatforms;
 }
 
-/** POST /api/pipeline-runs/:id/publish — Publish approved pipeline content */
+function getRetryPlatforms(postId: number) {
+  return getLatestPublishRows(postId)
+    .filter((row) => row.status === 'failed')
+    .map((row) => row.platform);
+}
+
+function getRequestedPlatforms(requestBody: unknown) {
+  const requestedPlatforms = Array.isArray((requestBody as { platforms?: unknown[] } | undefined)?.platforms)
+    ? (requestBody as { platforms: unknown[] }).platforms.filter(
+        (platform): platform is PlatformType =>
+          typeof platform === 'string' && VALID_PLATFORMS.includes(platform as PlatformType),
+      )
+    : [];
+
+  return Array.from(new Set(requestedPlatforms));
+}
+
+function resolveTargetPlatforms({
+  runStatus,
+  requestedPlatforms,
+  configuredPlatforms,
+  postId,
+}: {
+  runStatus: PipelineRun['status'];
+  requestedPlatforms: PlatformType[];
+  configuredPlatforms: PlatformType[];
+  postId: number;
+}) {
+  const retryDefaults = getRetryPlatforms(postId);
+  const defaultPlatforms = runStatus === 'approved'
+    ? configuredPlatforms
+    : retryDefaults.length > 0
+      ? retryDefaults
+      : configuredPlatforms;
+
+  const candidatePlatforms = requestedPlatforms.length > 0 ? requestedPlatforms : defaultPlatforms;
+  const targetPlatforms = candidatePlatforms.filter((platform) => configuredPlatforms.includes(platform));
+
+  return Array.from(new Set(targetPlatforms));
+}
+
+/** POST /api/pipeline-runs/:id/publish, publish approved pipeline content */
 export async function POST(request: NextRequest, { params }: Params) {
   const auth = await getAuth();
   if (!auth) {
@@ -80,11 +115,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const requestBody = await request.json().catch(() => ({}));
-  const requestedPlatforms = Array.isArray(requestBody?.platforms)
-    ? requestBody.platforms.filter((platform: unknown): platform is PlatformType =>
-        platform === 'youtube' || platform === 'instagram' || platform === 'facebook'
-      )
-    : [];
+  const requestedPlatforms = getRequestedPlatforms(requestBody);
 
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(run.post_id) as Post | undefined;
   if (!post) {
@@ -104,13 +135,21 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const parsed = parsePost(post);
-  const targetPlatforms = run.status === 'approved'
-    ? parsed.platforms
-    : getRetryPlatforms(post.id, requestedPlatforms);
+  const targetPlatforms = resolveTargetPlatforms({
+    runStatus: run.status,
+    requestedPlatforms,
+    configuredPlatforms: parsed.platforms,
+    postId: post.id,
+  });
 
   if (targetPlatforms.length === 0) {
+    const configuredList = parsed.platforms.map((platform) => platform.charAt(0).toUpperCase() + platform.slice(1)).join(', ');
     return NextResponse.json(
-      { error: 'No failed platforms to retry for this run.' },
+      {
+        error: requestedPlatforms.length > 0
+          ? `None of the requested platforms are configured for this post. Configured platforms: ${configuredList || 'none'}.`
+          : 'No valid platforms are available to publish for this run.',
+      },
       { status: 400 },
     );
   }
@@ -185,19 +224,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
   saveResults();
 
-  const latestRows = db
-    .prepare(
-      `SELECT pr.platform, pr.status
-       FROM publish_results pr
-       WHERE pr.post_id = ?
-         AND pr.id IN (
-           SELECT MAX(inner_pr.id)
-           FROM publish_results inner_pr
-           WHERE inner_pr.post_id = ?
-           GROUP BY inner_pr.platform
-         )`
-    )
-    .all(post.id, post.id) as Array<{ platform: PlatformType; status: 'success' | 'failed' }>;
+  const latestRows = getLatestPublishRows(post.id) as Array<{ platform: PlatformType; status: 'success' | 'failed' }>;
 
   const allLatestFailed = latestRows.length > 0 && latestRows.every((row) => row.status === 'failed');
   const finalStatus = allLatestFailed ? 'failed' : 'published';
