@@ -66,6 +66,9 @@ export default function PipelineRunPage() {
   const [hashtags, setHashtags] = useState("");
   const [highlight, setHighlight] = useState("");
   const [mediaPath, setMediaPath] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState<string | null>(null);
   const [prefillLoaded, setPrefillLoaded] = useState(false);
 
   const fromRunId = useMemo(() => searchParams.get("from_run"), [searchParams]);
@@ -128,6 +131,10 @@ export default function PipelineRunPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !tip.trim()) return;
+    if (isCustom && uploadingMedia) {
+      setError("Wait for the academy video upload to finish before starting the pipeline");
+      return;
+    }
     if (isCustom && !mediaPath) {
       setError("Upload a video before starting this pipeline");
       return;
@@ -322,12 +329,29 @@ export default function PipelineRunPage() {
                 <MediaUpload
                   tenantId={template.tenant_id}
                   accept="video/mp4,video/quicktime,video/webm"
-                  onUploaded={(paths) => setMediaPath(paths[0] ?? null)}
+                  onUploadStateChange={({ uploading, progress, fileNames }) => {
+                    setUploadingMedia(uploading);
+                    setUploadProgress(progress);
+                    setUploadFileName(fileNames[0] ?? null);
+                    if (uploading) {
+                      setMediaPath(null);
+                    }
+                  }}
+                  onUploaded={(paths) => {
+                    setMediaPath(paths[0] ?? null);
+                    setUploadingMedia(false);
+                    setUploadProgress(100);
+                  }}
                 />
               </div>
               <p className="text-xs text-zinc-500">
                 Upload a finished MP4/MOV/WebM file. The pipeline will publish it to YouTube and place it into the selected playlist.
               </p>
+              {uploadingMedia ? (
+                <div className="rounded-md border border-orange-500/20 bg-orange-500/10 px-3 py-2 text-xs text-orange-200">
+                  Upload in progress{uploadFileName ? `: ${uploadFileName}` : ""} ({uploadProgress}%). You can start the pipeline as soon as the upload completes.
+                </div>
+              ) : null}
               {fromRunId && !prefillLoaded ? (
                 <div className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
                   Loading previous run details...
@@ -368,7 +392,7 @@ export default function PipelineRunPage() {
         ) : (
           <button
             type="submit"
-            disabled={!title.trim() || !tip.trim() || !String(category).trim() || (isCustom && !mediaPath)}
+            disabled={!title.trim() || !tip.trim() || !String(category).trim() || (isCustom && (!mediaPath || uploadingMedia))}
             className="w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           >
             {isCustom ? "Upload to Academy" : "Generate Content"}
