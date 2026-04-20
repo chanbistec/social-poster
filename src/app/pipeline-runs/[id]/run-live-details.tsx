@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { PipelineRunStatus } from "@/lib/types";
+import type { PipelineRunStatus, PlatformType } from "@/lib/types";
 import RunActions from "./run-actions";
 import RunProgressCard from "./run-progress-card";
 
 type PublishResultRow = {
   id: number;
-  platform: string;
-  status: string;
+  platform: PlatformType;
+  status: "success" | "failed";
   external_url: string | null;
   error: string | null;
   published_at: string | null;
@@ -56,12 +56,14 @@ export default function RunLiveDetails({
   initialRun,
   initialPublishResults,
   initialPostSummary,
+  postPlatforms,
 }: {
   runId: number;
   templateId: number;
   initialRun: RunSnapshot;
   initialPublishResults: PublishResultRow[];
   initialPostSummary: PostSummary;
+  postPlatforms: PlatformType[];
 }) {
   const [payload, setPayload] = useState<LivePayload>({
     run: initialRun,
@@ -168,27 +170,47 @@ export default function RunLiveDetails({
                 )}
               </div>
               <div className="space-y-2">
-                {latestPlatformResults.map((result) => (
-                  <div key={result.platform} className="flex flex-col gap-2 rounded-md border border-white/5 bg-zinc-800/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium capitalize text-zinc-200">{platformLabel(result.platform)}</span>
-                        <span className={result.status === "success" ? "text-xs text-emerald-400" : "text-xs text-red-400"}>
-                          {result.status}
-                        </span>
+                {latestPlatformResults.map((result) => {
+                  const retryDisabled = payload.run.status === "publishing" || !postPlatforms.includes(result.platform);
+                  return (
+                    <div
+                      key={result.platform}
+                      className="flex flex-col gap-3 rounded-md border border-white/5 bg-zinc-800/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium capitalize text-zinc-200">{platformLabel(result.platform)}</span>
+                          <span className={result.status === "success" ? "text-xs text-emerald-400" : "text-xs text-red-400"}>
+                            {result.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-zinc-500">
+                          {result.published_at ? formatDate(result.published_at) : "No success timestamp"}
+                        </div>
+                        {result.error ? <div className="mt-1 text-xs text-red-300">{result.error}</div> : null}
                       </div>
-                      <div className="mt-1 text-xs text-zinc-500">
-                        {result.published_at ? formatDate(result.published_at) : "No success timestamp"}
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        {result.status === "failed" ? (
+                          <RunActionsInlineRetry
+                            runId={runId}
+                            platform={result.platform}
+                            disabled={retryDisabled}
+                          />
+                        ) : null}
+                        {result.external_url ? (
+                          <a
+                            href={result.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-orange-400 hover:text-orange-300"
+                          >
+                            View →
+                          </a>
+                        ) : null}
                       </div>
-                      {result.error ? <div className="mt-1 text-xs text-red-300">{result.error}</div> : null}
                     </div>
-                    {result.external_url ? (
-                      <a href={result.external_url} target="_blank" rel="noopener noreferrer" className="text-sm text-orange-400 hover:text-orange-300">
-                        View →
-                      </a>
-                    ) : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -203,7 +225,8 @@ export default function RunLiveDetails({
             runId={runId}
             status={payload.run.status}
             templateId={templateId}
-            hasFailedPlatforms={latestFailedResults.length > 0}
+            postPlatforms={postPlatforms}
+            latestPlatformResults={latestPlatformResults}
           />
         </div>
 
@@ -246,8 +269,60 @@ export default function RunLiveDetails({
   );
 }
 
+function RunActionsInlineRetry({
+  runId,
+  platform,
+  disabled,
+}: {
+  runId: number;
+  platform: PlatformType;
+  disabled: boolean;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRetry() {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/pipeline-runs/${runId}/publish`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ platforms: [platform] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || `Failed to retry ${platformLabel(platform)}`);
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setError(`Failed to retry ${platformLabel(platform)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1 sm:items-end">
+      <button
+        type="button"
+        onClick={handleRetry}
+        disabled={disabled || loading}
+        className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-medium text-orange-200 transition-colors hover:bg-orange-500/20 disabled:opacity-50"
+      >
+        {loading ? "Retrying..." : `Retry ${platformLabel(platform)}`}
+      </button>
+      {error ? <span className="text-[11px] text-red-300">{error}</span> : null}
+    </div>
+  );
+}
+
 function getLatestPlatformResults(results: PublishResultRow[]) {
-  const latestByPlatform = new Map<string, PublishResultRow>();
+  const latestByPlatform = new Map<PlatformType, PublishResultRow>();
   for (const result of results) latestByPlatform.set(result.platform, result);
   return Array.from(latestByPlatform.values()).sort((a, b) => a.platform.localeCompare(b.platform));
 }
@@ -321,7 +396,7 @@ function buildTimeline({
         key: "retry-hint",
         time: null,
         title: "Retry ready",
-        detail: `One-click retry will target only failed platforms: ${failedPlatforms.join(", ")}.`,
+        detail: `One-click retry will target only failed platforms: ${failedPlatforms.map(platformLabel).join(", ")}.`,
         tone: "amber",
       });
     }
@@ -401,42 +476,23 @@ function formatDate(value: string) {
   }
 }
 
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function platformLabel(platform: PlatformType) {
+  return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
-function platformLabel(platform: string) {
+function successActionLabel(platform: PlatformType) {
   switch (platform) {
-    case "youtube_playlist":
-      return "YouTube playlist";
-    case "viva_engage":
-      return "Viva Engage";
-    case "pipeline":
-      return "Pipeline";
-    default:
-      return capitalize(platform.replace(/_/g, " "));
-  }
-}
-
-function successActionLabel(platform: string) {
-  switch (platform) {
-    case "youtube_playlist":
-      return "updated";
-    case "viva_engage":
-      return "shared";
+    case "youtube":
+      return "published";
     default:
       return "published";
   }
 }
 
-function successDetail(platform: string) {
+function successDetail(platform: PlatformType) {
   switch (platform) {
-    case "youtube_playlist":
-      return "Playlist was created or updated and the video was added.";
     case "youtube":
       return "Video upload completed successfully.";
-    case "viva_engage":
-      return "The academy update was posted to Viva Engage.";
     default:
       return "Platform accepted the content.";
   }

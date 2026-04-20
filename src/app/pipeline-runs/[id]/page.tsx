@@ -1,5 +1,5 @@
 import db from "@/lib/db";
-import type { PipelineRunStatus } from "@/lib/types";
+import type { PipelineRunStatus, PlatformType } from "@/lib/types";
 import RunLiveDetails from "./run-live-details";
 
 type PublishResultRow = {
@@ -14,6 +14,10 @@ type PublishResultRow = {
 type PostSummary = {
   approved_at: string | null;
   approved_by: string | null;
+} | null;
+
+type PostPlatformRow = {
+  platforms: string;
 } | null;
 
 export default async function PipelineRunDetailPage({
@@ -65,6 +69,10 @@ export default async function PipelineRunDetailPage({
         approved_by: string | null;
       } | undefined) ?? null)
     : null;
+
+  const postPlatforms = run.post_id
+    ? parseJson<PlatformType[]>((db.prepare("SELECT platforms FROM posts WHERE id = ?").get(run.post_id) as PostPlatformRow | undefined)?.platforms, [])
+    : [];
 
   return (
     <div className="space-y-6">
@@ -121,6 +129,7 @@ export default async function PipelineRunDetailPage({
         }}
         initialPublishResults={publishResults}
         initialPostSummary={postSummary}
+        postPlatforms={postPlatforms}
       />
 
       {Object.keys(stepResults).length > 0 && (
