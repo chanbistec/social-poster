@@ -38,6 +38,15 @@ export default function PlatformActions({ tenantId }: { tenantId: string }) {
     <>
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button
+          onClick={() => {
+            const params = new URLSearchParams({ tenant_id: tenantId });
+            window.location.href = `/api/platforms/youtube/start?${params.toString()}`;
+          }}
+          className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-xs font-medium text-orange-200 transition-colors hover:bg-orange-500/20"
+        >
+          Connect YouTube
+        </button>
+        <button
           onClick={() => openForm("facebook")}
           className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-xs font-medium text-orange-200 transition-colors hover:bg-orange-500/20"
         >

@@ -11,6 +11,7 @@ const PLATFORM_TYPES: { value: PlatformType; label: string }[] = [
 ];
 
 const META_TYPES: PlatformType[] = ["instagram", "facebook"];
+const OAUTH_TYPES: PlatformType[] = ["youtube", ...META_TYPES];
 
 interface PlatformFormProps {
   tenantId: string;
@@ -41,11 +42,13 @@ export default function PlatformForm({
 
   const isEdit = editId !== undefined;
   const isMetaType = META_TYPES.includes(type);
+  const isOAuthType = OAUTH_TYPES.includes(type);
   const dialogTitle = isEdit ? `Edit ${type[0].toUpperCase()}${type.slice(1)} Platform` : "Add Platform";
 
   const oauthLabel = useMemo(() => {
     if (type === "instagram") return isEdit ? "Reconnect Instagram with Meta" : "Connect Instagram with Meta";
     if (type === "facebook") return isEdit ? "Reconnect Facebook with Meta" : "Connect Facebook with Meta";
+    if (type === "youtube") return isEdit ? "Reconnect YouTube" : "Connect YouTube";
     return "Connect with OAuth";
   }, [isEdit, type]);
 
@@ -101,6 +104,12 @@ export default function PlatformForm({
 
   function handleMetaConnect() {
     setOauthLoading(true);
+    if (type === "youtube") {
+      const params = new URLSearchParams({ tenant_id: tenantId });
+      window.location.href = `/api/platforms/youtube/start?${params.toString()}`;
+      return;
+    }
+
     const params = new URLSearchParams({ tenant_id: tenantId, type });
     window.location.href = `/api/platforms/meta/start?${params.toString()}`;
   }
@@ -116,7 +125,9 @@ export default function PlatformForm({
           <p className="text-sm text-zinc-400">
             {isMetaType
               ? "Use Meta login for the normal setup flow. Manual JSON is still here for recovery and advanced cases."
-              : "Add platform credentials and config."}
+              : type === "youtube"
+                ? "Use Google OAuth for the normal YouTube setup flow. Manual JSON is still here for recovery and advanced cases."
+                : "Add platform credentials and config."}
           </p>
         </div>
 
@@ -146,13 +157,17 @@ export default function PlatformForm({
           </select>
         </div>
 
-        {isMetaType && (
+        {isOAuthType && (
           <div className="rounded-xl border border-orange-500/20 bg-gradient-to-br from-zinc-950 via-zinc-900 to-orange-950/30 p-4">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
-                <p className="text-sm font-semibold text-white">Meta login is the primary setup path</p>
+                <p className="text-sm font-semibold text-white">
+                  {type === "youtube" ? "Google OAuth is the primary setup path" : "Meta login is the primary setup path"}
+                </p>
                 <p className="text-sm text-zinc-300">
-                  We&apos;ll open Meta, ask for page access, then save the page token and account details back to this tenant.
+                  {type === "youtube"
+                    ? "We&apos;ll open Google, request YouTube upload access, then save the channel connection back to this tenant."
+                    : "We&apos;ll open Meta, ask for page access, then save the page token and account details back to this tenant."}
                 </p>
               </div>
               <button
@@ -168,12 +183,14 @@ export default function PlatformForm({
             <div className="mt-3 rounded-lg border border-white/10 bg-zinc-950/60 p-3 text-xs text-zinc-400">
               {type === "instagram"
                 ? "The app will connect the first Facebook page in this Meta login that has an attached Instagram business account."
-                : "The app will connect the first Facebook page available in this Meta login."}
+                : type === "facebook"
+                  ? "The app will connect the first Facebook page available in this Meta login."
+                  : "The app will connect the YouTube channel for the signed-in Google account and store the refresh token for future uploads."}
             </div>
           </div>
         )}
 
-        {(!isMetaType || showManualMeta) && (
+        {(!isOAuthType || showManualMeta) && (
           <div className="grid gap-4">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
@@ -210,7 +227,7 @@ export default function PlatformForm({
           </div>
         )}
 
-        {isMetaType && !showManualMeta && (
+        {isOAuthType && !showManualMeta && (
           <button
             type="button"
             onClick={() => setShowManualMeta(true)}

@@ -63,6 +63,7 @@ export default function PlatformCard({
   const status = tokenStatus(tokenExpiresAt);
   const masked = maskCredentials(credentials);
   const isMeta = type === "instagram" || type === "facebook";
+  const isYouTube = type === "youtube";
 
   async function handleDelete() {
     setDeleting(true);
@@ -84,6 +85,12 @@ export default function PlatformCard({
   }
 
   function handleReconnect() {
+    if (isYouTube) {
+      const params = new URLSearchParams({ tenant_id: tenantId });
+      window.location.href = `/api/platforms/youtube/start?${params.toString()}`;
+      return;
+    }
+
     const params = new URLSearchParams({ tenant_id: tenantId, type });
     window.location.href = `/api/platforms/meta/start?${params.toString()}`;
   }
@@ -107,12 +114,12 @@ export default function PlatformCard({
             {!enabled && <span className="text-xs text-zinc-500">(disabled)</span>}
           </div>
           <div className="flex flex-wrap items-center gap-1">
-            {isMeta && (
+            {(isMeta || isYouTube) && (
               <button
                 onClick={handleReconnect}
                 className="rounded-md px-2.5 py-1 text-xs text-orange-300 transition-colors hover:bg-orange-500/20 hover:text-orange-200"
               >
-                Reconnect Meta
+                {isYouTube ? "Reconnect YouTube" : "Reconnect Meta"}
               </button>
             )}
             <button
@@ -166,9 +173,11 @@ export default function PlatformCard({
           </div>
         </div>
 
-        {isMeta && (
+        {(isMeta || isYouTube) && (
           <div className="rounded-md border border-orange-500/15 bg-orange-500/5 px-3 py-2 text-xs text-zinc-300">
-            Meta OAuth is the preferred setup path here. Manual JSON editing remains available under Edit for recovery cases.
+            {isYouTube
+              ? "YouTube OAuth is the preferred setup path here. Manual JSON editing remains available under Edit for recovery cases."
+              : "Meta OAuth is the preferred setup path here. Manual JSON editing remains available under Edit for recovery cases."}
           </div>
         )}
 
