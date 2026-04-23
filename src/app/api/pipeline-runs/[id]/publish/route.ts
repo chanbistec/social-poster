@@ -6,12 +6,28 @@ import { ensureFreshToken } from '@/lib/token-refresh';
 import { publishPost, type PlatformConfig } from '@/lib/publishers/index';
 import type { PipelineRun, Post, PostParsed, Platform, PlatformType } from '@/lib/types';
 
+export const runtime = 'nodejs';
+
 type Params = { params: Promise<{ id: string }> };
 
 type PublishResultRow = {
   id: number;
   platform: PlatformType;
   status: 'pending' | 'success' | 'failed';
+};
+
+type StepState = 'pending' | 'running' | 'completed' | 'failed';
+
+type StepResult = {
+  key: string;
+  label: string;
+  description: string;
+  state: StepState;
+  startedAt?: string;
+  completedAt?: string;
+  summary?: string;
+  error?: string;
+  result?: unknown;
 };
 
 const VALID_PLATFORMS: PlatformType[] = ['youtube', 'instagram', 'facebook'];
@@ -80,6 +96,139 @@ function resolveTargetPlatforms({
   const targetPlatforms = candidatePlatforms.filter((platform) => configuredPlatforms.includes(platform));
 
   return Array.from(new Set(targetPlatforms));
+}
+
+function parseStepResults(raw: string | null) {
+  if (!raw) return {} as Record<string, StepResult>;
+  try {
+    return JSON.parse(raw) as Record<string, StepResult>;
+  } catch {
+    return {} as Record<string, StepResult>;
+  }
+}
+
+function platformLabel(platform: PlatformType) {
+  switch (platform) {
+    case 'youtube':
+      return 'YouTube';
+    case 'instagram':
+      return 'Instagram';
+    case 'facebook':
+      return 'Facebook';
+    default:
+      return platform;
+  }
+}
+
+function publishStepKey(platform: PlatformType) {
+  return `publish_${platform}`;
+}
+
+function publishStep(platform: PlatformType, patch: Partial<StepResult>): StepResult {
+  return {
+    key: publishStepKey(platform),
+    label: `Publish ${platformLabel(platform)}`,
+    description: `Publish this run to ${platformLabel(platform)}.`,
+    state: 'pending',
+    ...patch,
+  };
+}
+
+function persistRunStepResults(runId: number, stepResults: Record<string, StepResult>) {
+  db.prepare('UPDATE pipeline_runs SET step_results = ?, updated_at = ? WHERE id = ?').run(
+    JSON.stringify(stepResults),
+    new Date().toISOString(),
+    runId,
+  );
+}
+
+async function publishRunInBackground({
+  runId,
+  post,
+  parsedPost,
+  platformConfigs,
+  targetPlatforms,
+}: {
+  runId: number;
+  post: Post;
+  parsedPost: PostParsed;
+  platformConfigs: PlatformConfig[];
+  targetPlatforms: PlatformType[];
+}) {
+  const stepResults = parseStepResults((db.prepare('SELECT step_results FROM pipeline_runs WHERE id = ?').get(runId) as { step_results: string | null } | undefined)?.step_results ?? null);
+
+  for (const platform of targetPlatforms) {
+    stepResults[publishStepKey(platform)] = publishStep(platform, {
+      state: 'pending',
+      summary: 'Queued for publishing',
+      error: undefined,
+    });
+  }
+  persistRunStepResults(runId, stepResults);
+
+  const insertResult = db.prepare(`
+    INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const config of platformConfigs) {
+    const platform = config.platform;
+    const startedAt = new Date().toISOString();
+    stepResults[publishStepKey(platform)] = publishStep(platform, {
+      state: 'running',
+      startedAt,
+      completedAt: undefined,
+      summary: `Publishing to ${platformLabel(platform)}...`,
+      error: undefined,
+    });
+    persistRunStepResults(runId, stepResults);
+
+    const [result] = await publishPost(
+      {
+        ...parsedPost,
+        platforms: [platform],
+      },
+      [config],
+    );
+
+    const publishedAt = result.success ? new Date().toISOString() : null;
+    insertResult.run(
+      post.id,
+      result.platform,
+      result.success ? 'success' : 'failed',
+      result.external_id ?? null,
+      result.external_url ?? null,
+      result.error ?? null,
+      publishedAt,
+    );
+
+    stepResults[publishStepKey(platform)] = publishStep(platform, {
+      state: result.success ? 'completed' : 'failed',
+      startedAt,
+      completedAt: new Date().toISOString(),
+      summary: result.success
+        ? `${platformLabel(platform)} publish completed${result.external_id ? ` (${result.external_id})` : ''}`
+        : result.error || `${platformLabel(platform)} publish failed`,
+      error: result.success ? undefined : result.error || `${platformLabel(platform)} publish failed`,
+      result,
+    });
+    persistRunStepResults(runId, stepResults);
+  }
+
+  const latestRows = getLatestPublishRows(post.id) as Array<{ platform: PlatformType; status: 'success' | 'failed' }>;
+  const allLatestFailed = latestRows.length > 0 && latestRows.every((row) => row.status === 'failed');
+  const finalStatus = allLatestFailed ? 'failed' : 'published';
+  const latestFailure = [...latestRows].reverse().find((row) => row.status === 'failed');
+  const runError = latestFailure ? `${platformLabel(latestFailure.platform)} publish failed. See run details for the latest error.` : null;
+
+  db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), post.id);
+  db.prepare('UPDATE pipeline_runs SET status = ?, error = ?, completed_at = ?, updated_at = ? WHERE id = ?').run(
+    finalStatus,
+    runError,
+    new Date().toISOString(),
+    new Date().toISOString(),
+    runId,
+  );
 }
 
 /** POST /api/pipeline-runs/:id/publish, publish approved pipeline content */
@@ -166,6 +315,19 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
+  const availablePlatforms = new Set(platformRows.map((platform) => platform.type));
+  const missingPlatforms = targetPlatforms.filter((platform) => !availablePlatforms.has(platform));
+  if (missingPlatforms.length > 0) {
+    return NextResponse.json(
+      {
+        error: `These platforms are not currently connected and enabled for this tenant: ${missingPlatforms
+          .map(platformLabel)
+          .join(', ')}`,
+      },
+      { status: 400 },
+    );
+  }
+
   for (const p of platformRows) {
     try {
       await ensureFreshToken(p, decrypt, encrypt);
@@ -195,42 +357,34 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const now = new Date().toISOString();
   db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('publishing', now, post.id);
-  db.prepare('UPDATE pipeline_runs SET status = ?, updated_at = ? WHERE id = ?').run('publishing', now, runId);
+  db.prepare('UPDATE pipeline_runs SET status = ?, error = ?, completed_at = ?, updated_at = ? WHERE id = ?').run(
+    'publishing',
+    null,
+    null,
+    now,
+    runId,
+  );
 
-  const scopedPost: PostParsed = {
-    ...parsed,
-    platforms: targetPlatforms,
-  };
-
-  const results = await publishPost(scopedPost, platformConfigs);
-
-  const insertResult = db.prepare(`
-    INSERT INTO publish_results (post_id, platform, status, external_id, external_url, error, published_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const saveResults = db.transaction(() => {
-    for (const r of results) {
-      insertResult.run(
-        post.id,
-        r.platform,
-        r.success ? 'success' : 'failed',
-        r.external_id ?? null,
-        r.external_url ?? null,
-        r.error ?? null,
-        r.success ? new Date().toISOString() : null,
+  setImmediate(() => {
+    void publishRunInBackground({
+      runId,
+      post,
+      parsedPost: parsed,
+      platformConfigs,
+      targetPlatforms,
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Pipeline Publish] Run ${runId} failed:`, error);
+      db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('failed', new Date().toISOString(), post.id);
+      db.prepare('UPDATE pipeline_runs SET status = ?, error = ?, completed_at = ?, updated_at = ? WHERE id = ?').run(
+        'failed',
+        message,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        runId,
       );
-    }
+    });
   });
-  saveResults();
-
-  const latestRows = getLatestPublishRows(post.id) as Array<{ platform: PlatformType; status: 'success' | 'failed' }>;
-
-  const allLatestFailed = latestRows.length > 0 && latestRows.every((row) => row.status === 'failed');
-  const finalStatus = allLatestFailed ? 'failed' : 'published';
-
-  db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), post.id);
-  db.prepare('UPDATE pipeline_runs SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus, new Date().toISOString(), runId);
 
   const updatedRun = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId);
   const updatedPost = db.prepare('SELECT * FROM posts WHERE id = ?').get(post.id);
@@ -239,8 +393,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     data: {
       run: updatedRun,
       post: updatedPost,
-      results,
       retried_platforms: targetPlatforms,
+      background: true,
     },
   });
 }
