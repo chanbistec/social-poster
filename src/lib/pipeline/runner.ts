@@ -901,6 +901,20 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
           }
         }
 
+        setStepRunning(runId, stepResults, 'finalize');
+        setStepComplete(
+          runId,
+          stepResults,
+          'finalize',
+          {
+            outputPaths,
+            postId,
+            youtubeUrl: youtubeResult.external_url ?? null,
+            playlistUrl: playlistResult?.playlistUrl ?? null,
+          },
+          'Upload pipeline finished and results were saved',
+        );
+
         db.prepare('UPDATE posts SET status = ?, updated_at = ? WHERE id = ?').run('published', new Date().toISOString(), postId);
         updateRunStatus(runId, 'published', {
           post_id: postId,
