@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import db from "@/lib/db";
 import { getAuth } from "@/lib/route-auth";
-import { generateContentBrief } from "@/lib/pipeline/content-brief";
+import { generateContentBriefs } from "@/lib/pipeline/content-brief";
 import type { PipelineTemplate } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,6 +11,12 @@ type Params = { params: Promise<{ id: string }> };
 type TemplateWithTenant = Pick<PipelineTemplate, "id" | "name" | "description" | "type" | "tenant_id"> & {
   tenant_name?: string | null;
 };
+
+function parseCount(value: unknown) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(12, Math.max(1, Math.floor(numeric)));
+}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const auth = await getAuth();
@@ -43,20 +49,29 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const body = await request.json().catch(() => null);
   const category = typeof body?.category === "string" ? body.category.trim() : "";
+  const count = parseCount(body?.count);
 
   if (!category) {
     return NextResponse.json({ error: "category is required" }, { status: 400 });
   }
 
   try {
-    const brief = await generateContentBrief({
-      category,
-      pipelineName: template.name,
-      pipelineDescription: template.description,
-      tenantName: template.tenant_name || template.tenant_id,
-    });
+    const briefs = await generateContentBriefs(
+      {
+        category,
+        pipelineName: template.name,
+        pipelineDescription: template.description,
+        tenantName: template.tenant_name || template.tenant_id,
+      },
+      count,
+    );
 
-    return NextResponse.json({ data: brief });
+    return NextResponse.json({
+      data: count === 1 ? briefs[0] : briefs,
+      items: briefs,
+      count: briefs.length,
+      category,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to generate content brief";
     return NextResponse.json({ error: message }, { status: 500 });
