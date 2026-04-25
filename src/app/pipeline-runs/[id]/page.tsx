@@ -6,6 +6,7 @@ type PublishResultRow = {
   id: number;
   platform: string;
   status: string;
+  external_id: string | null;
   external_url: string | null;
   error: string | null;
   published_at: string | null;
@@ -91,6 +92,7 @@ export default async function PipelineRunDetailPage({
           {Boolean(inputParams.title) && <ParamRow label="Title" value={String(inputParams.title)} />}
           {Boolean(inputParams.tip) && <ParamRow label="Tip" value={String(inputParams.tip)} />}
           {Boolean(inputParams.category) && <ParamRow label="Category" value={String(inputParams.category)} />}
+          {Boolean(run.scheduled_at) && <ParamRow label="Scheduled for" value={formatDateTime(String(run.scheduled_at))} />}
           {hashtags.length > 0 && (
             <div>
               <span className="text-zinc-500">Hashtags</span>
@@ -124,6 +126,7 @@ export default async function PipelineRunDetailPage({
           completed_at: (run.completed_at as string | null) ?? null,
           updated_at: (run.updated_at as string | null) ?? null,
           created_at: (run.created_at as string | null) ?? null,
+          scheduled_at: (run.scheduled_at as string | null) ?? null,
           started_at: (run.started_at as string | null) ?? null,
           post_id: (run.post_id as number | null) ?? null,
         }}
@@ -164,6 +167,14 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
+function formatDateTime(value: string) {
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
 function ParamRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -172,4 +183,3 @@ function ParamRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

@@ -88,6 +88,7 @@ export function runMigrations(db: Database.Database): void {
       step_results  TEXT,
       output_paths  TEXT,
       error         TEXT,
+      scheduled_at  TEXT,
       started_at    TEXT,
       completed_at  TEXT,
       created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -125,11 +126,18 @@ export function runMigrations(db: Database.Database): void {
 
   const pipelineRunColumns = db.prepare("PRAGMA table_info(pipeline_runs)").all() as Array<{ name: string }>;
   const hasPipelineRunUpdatedAt = pipelineRunColumns.some((column) => column.name === 'updated_at');
+  const hasPipelineRunScheduledAt = pipelineRunColumns.some((column) => column.name === 'scheduled_at');
 
   if (!hasPipelineRunUpdatedAt) {
     db.exec(`ALTER TABLE pipeline_runs ADD COLUMN updated_at TEXT`);
     db.exec(`UPDATE pipeline_runs SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`);
   }
+
+  if (!hasPipelineRunScheduledAt) {
+    db.exec(`ALTER TABLE pipeline_runs ADD COLUMN scheduled_at TEXT`);
+  }
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_scheduled ON pipeline_runs(scheduled_at)`);
 }
 
 // Allow running directly: npx tsx scripts/migrate.ts

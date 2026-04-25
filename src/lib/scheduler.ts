@@ -2,7 +2,8 @@ import * as cron from 'node-cron';
 import db from './db';
 import { decrypt } from './crypto';
 import { publishPost, type PlatformConfig } from './publishers/index';
-import type { Post, PostParsed, Platform, PlatformType } from './types';
+import { startPipelineRunInBackground } from './pipeline/runner';
+import type { PipelineRun, Post, PostParsed, Platform, PlatformType } from './types';
 
 const MAX_RETRIES = 3;
 const CRON_EXPRESSION = '* * * * *'; // every minute
@@ -13,7 +14,7 @@ const CRON_EXPRESSION = '* * * * *'; // every minute
  */
 export class PostScheduler {
   private task: cron.ScheduledTask | null = null;
-  private processing = new Set<number>();
+  private processing = new Set<string>();
   private retryMap = new Map<number, { count: number; nextAttempt: number }>();
   private _running = false;
 
@@ -27,6 +28,9 @@ export class PostScheduler {
     this.task = cron.schedule(CRON_EXPRESSION, () => {
       this.processDuePosts().catch((err) => {
         console.error('[Scheduler] Unhandled error in processDuePosts:', err);
+      });
+      this.processDuePipelineRuns().catch((err) => {
+        console.error('[Scheduler] Unhandled error in processDuePipelineRuns:', err);
       });
       refreshExpiringTokens().catch((err) => {
         console.error('[Scheduler] Token refresh error:', err);
@@ -64,6 +68,18 @@ export class PostScheduler {
     }
   }
 
+  getPendingPipelineRunCount(): number {
+    try {
+      const row = db
+        .prepare(`SELECT COUNT(*) as cnt FROM pipeline_runs WHERE status = 'pending' AND scheduled_at IS NOT NULL`)
+        .get() as { cnt: number } | undefined;
+      return row?.cnt ?? 0;
+    } catch (err) {
+      console.error('[Scheduler] Error counting pending pipeline runs:', err);
+      return 0;
+    }
+  }
+
   // ── Core loop ──
 
   async processDuePosts(): Promise<void> {
@@ -87,8 +103,9 @@ export class PostScheduler {
     console.log(`[Scheduler] Found ${duePosts.length} due post(s)`);
 
     for (const post of duePosts) {
+      const processingKey = `post:${post.id}`;
       // Skip if already being processed
-      if (this.processing.has(post.id)) {
+      if (this.processing.has(processingKey)) {
         console.log(`[Scheduler] Post ${post.id} already processing, skipping`);
         continue;
       }
@@ -102,13 +119,55 @@ export class PostScheduler {
       // Fire-and-forget per post (but tracked via processing set)
       this.processPost(post).catch((err) => {
         console.error(`[Scheduler] Unhandled error processing post ${post.id}:`, err);
-        this.processing.delete(post.id);
+        this.processing.delete(`post:${post.id}`);
+      });
+    }
+  }
+
+  async processDuePipelineRuns(): Promise<void> {
+    let dueRuns: PipelineRun[];
+    try {
+      dueRuns = db
+        .prepare(
+          `SELECT * FROM pipeline_runs
+           WHERE status = 'pending'
+             AND scheduled_at IS NOT NULL
+             AND scheduled_at <= datetime('now')
+           ORDER BY scheduled_at ASC`
+        )
+        .all() as PipelineRun[];
+    } catch (err) {
+      console.error('[Scheduler] Error querying due pipeline runs:', err);
+      return;
+    }
+
+    for (const run of dueRuns) {
+      const processingKey = `pipeline:${run.id}`;
+      if (this.processing.has(processingKey)) {
+        continue;
+      }
+
+      const claim = db
+        .prepare(
+          `UPDATE pipeline_runs
+           SET status = 'generating', started_at = COALESCE(started_at, ?), updated_at = ?
+           WHERE id = ? AND status = 'pending' AND scheduled_at IS NOT NULL AND scheduled_at <= datetime('now')`
+        )
+        .run(new Date().toISOString(), new Date().toISOString(), run.id);
+
+      if (claim.changes === 0) {
+        continue;
+      }
+
+      this.processing.add(processingKey);
+      startPipelineRunInBackground(run.id, () => {
+        this.processing.delete(processingKey);
       });
     }
   }
 
   private async processPost(post: Post): Promise<void> {
-    this.processing.add(post.id);
+    this.processing.add(`post:${post.id}`);
 
     try {
       // Mark as publishing
@@ -237,7 +296,7 @@ export class PostScheduler {
         // Last resort — don't crash
       }
     } finally {
-      this.processing.delete(post.id);
+      this.processing.delete(`post:${post.id}`);
     }
   }
 
@@ -310,9 +369,11 @@ function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-// Export singleton — auto-starts
+// Export singleton — auto-starts outside the Next.js production build phase
 export const scheduler = new PostScheduler();
-scheduler.start();
+if (process.env.NEXT_PHASE !== 'phase-production-build') {
+  scheduler.start();
+}
 
 // ---------------------------------------------------------------------------
 // Token refresh (runs every 30 minutes)

@@ -23,6 +23,7 @@ type RunSnapshot = {
   step_results: unknown;
   output_paths: string[] | null;
   error: string | null;
+  scheduled_at?: string | null;
   completed_at: string | null;
   updated_at?: string | null;
 };
@@ -86,7 +87,7 @@ export default function RunProgressCard({
   const percent = steps.length
     ? Math.round((((completedCount + ((partialStepPercent ?? 0) / 100)) / steps.length) * 100))
     : 0;
-  const currentStage = currentStep?.summary || currentStep?.description || "Waiting for the pipeline worker to start.";
+  const currentStage = currentStep?.summary || currentStep?.description || (run.scheduled_at ? `Waiting for the scheduled start time (${formatDate(run.scheduled_at)}).` : "Waiting for the pipeline worker to start.");
   const activeElapsedAt = currentStep?.startedAt ?? run.completed_at ?? undefined;
   const lastUpdatedAt = run.updated_at ?? currentStep?.completedAt ?? currentStep?.startedAt ?? undefined;
 
@@ -108,6 +109,7 @@ export default function RunProgressCard({
           </p>
          <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
             <LiveMetaPill label="Stage" value={currentStep?.label || statusLabel(run.status)} />
+            {run.scheduled_at ? <LiveMetaPill label="Scheduled" value={formatDate(run.scheduled_at)} /> : null}
             <LiveMetaPill label={run.status === "failed" || run.completed_at ? "Completed" : "Elapsed"} value={formatElapsed(activeElapsedAt, now)} />
             <LiveMetaPill label="Last update" value={formatRelativeTime(lastUpdatedAt, now)} />
             {partialStepPercent !== null ? <LiveMetaPill label="Current step" value={`${partialStepPercent}%`} /> : null}
@@ -237,7 +239,7 @@ function statusHeadline(status: PipelineRunStatus, currentStep?: string) {
     case "published":
       return "Run published";
     default:
-      return currentStep ? `${currentStep} in progress` : "Starting pipeline run";
+      return currentStep ? `${currentStep} in progress` : "Scheduled pipeline run";
   }
 }
 
@@ -262,7 +264,7 @@ function extractPercent(summary?: string) {
 function statusLabel(status: PipelineRunStatus) {
   switch (status) {
     case "pending":
-      return "Queued";
+      return "Scheduled / queued";
     case "generating":
       return "Generating";
     case "publishing":

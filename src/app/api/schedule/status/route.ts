@@ -7,6 +7,7 @@ export async function GET() {
       running: scheduler.running,
       processing: scheduler.processingCount,
       pending: scheduler.getPendingCount(),
+      pending_pipeline_runs: scheduler.getPendingPipelineRunCount(),
       nextCheck: scheduler.running ? 'within 60 seconds' : 'stopped',
       timestamp: new Date().toISOString(),
     });

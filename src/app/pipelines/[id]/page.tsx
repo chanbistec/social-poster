@@ -277,6 +277,11 @@ export default async function PipelineDetailPage({
                       <span className="text-xs text-zinc-500">
                         Created {formatDate(run.created_at as string)}
                       </span>
+                      {Boolean(run.scheduled_at) && (
+                        <span className="text-xs text-zinc-500">
+                          Scheduled {formatDate(run.scheduled_at as string)}
+                        </span>
+                      )}
                       {Boolean(run.completed_at) && (
                         <span className="text-xs text-zinc-500">
                           Finished {formatDate(run.completed_at as string)}
@@ -383,7 +388,7 @@ function summarizeRunProgress(
     detail:
       completedSteps.length > 0
         ? `${completedSteps.length} step${completedSteps.length === 1 ? "" : "s"} completed.`
-        : "Waiting for the pipeline worker to start.",
+        : "Waiting for the pipeline worker to start or for the scheduled time to arrive.",
     outputs,
   };
 }
@@ -566,7 +571,7 @@ function TypeBadge({ type }: { type: string }) {
 
 function StatusBadge({ status }: { status: PipelineRunStatus }) {
   const styles: Record<PipelineRunStatus, string> = {
-    pending: "bg-zinc-500/20 text-zinc-400",
+    pending: "bg-zinc-500/20 text-zinc-300",
     generating: "bg-blue-500/20 text-blue-400 animate-pulse",
     preview: "bg-amber-500/20 text-amber-400",
     approved: "bg-green-500/20 text-green-400",

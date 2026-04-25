@@ -19,6 +19,7 @@ type RunPayload = {
   hashtags?: unknown;
   highlight?: unknown;
   media_path?: unknown;
+  scheduled_at?: unknown;
 };
 
 function getCustomStepConfig(template: Pick<PipelineTemplate, 'steps'>, type: string) {
@@ -160,9 +161,25 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
+  const scheduledAtRaw = typeof body.scheduled_at === 'string' ? body.scheduled_at.trim() : '';
+  let scheduledAt: string | null = null;
+
+  if (scheduledAtRaw) {
+    const parsed = new Date(scheduledAtRaw);
+    if (Number.isNaN(parsed.getTime())) {
+      return NextResponse.json({ error: 'Invalid scheduled_at date format' }, { status: 400 });
+    }
+    if (parsed.getTime() <= Date.now()) {
+      return NextResponse.json({ error: 'scheduled_at must be in the future' }, { status: 400 });
+    }
+    scheduledAt = parsed.toISOString();
+  }
+
   const runIds = inputs.map((input) => {
-    const runId = createPipelineRun(templateId, input);
-    startPipelineRunInBackground(runId);
+    const runId = createPipelineRun(templateId, input, { scheduledAt });
+    if (!scheduledAt) {
+      startPipelineRunInBackground(runId);
+    }
     return runId;
   });
 
@@ -173,7 +190,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       run_id: newestRunId,
       run_ids: runIds,
       queued_count: runIds.length,
-      status: 'generating',
+      status: scheduledAt ? 'pending' : 'generating',
+      scheduled_at: scheduledAt,
       output_paths: [],
     },
   });

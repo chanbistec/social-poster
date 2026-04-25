@@ -89,6 +89,7 @@ export default function PipelineRunPage() {
   const [hashtags, setHashtags] = useState("");
   const [highlight, setHighlight] = useState("");
   const [mediaPath, setMediaPath] = useState<string | null>(null);
+  const [scheduledAt, setScheduledAt] = useState("");
   const [batchSize, setBatchSize] = useState<number>(1);
   const [drafts, setDrafts] = useState<DraftItem[]>([createEmptyDraft()]);
 
@@ -236,6 +237,7 @@ export default function PipelineRunPage() {
                 .filter(Boolean),
               highlight: draft.highlight.trim() || undefined,
             })),
+            scheduled_at: scheduledAt || undefined,
           }
         : {
             title: singleDraft.title,
@@ -247,6 +249,7 @@ export default function PipelineRunPage() {
               .filter(Boolean),
             highlight: singleDraft.highlight || undefined,
             media_path: mediaPath || undefined,
+            scheduled_at: scheduledAt || undefined,
           };
 
       const res = await fetch(`/api/pipelines/${id}/run`, {
@@ -355,6 +358,24 @@ export default function PipelineRunPage() {
                 </p>
               </div>
             ) : null}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-zinc-300">Schedule for later</label>
+              <input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                className="w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+              />
+              <p className="mt-1 text-xs text-zinc-500">Leave blank to start immediately. Scheduled runs stay queued until their start time.</p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-zinc-950/50 p-4 text-xs text-zinc-400 md:self-end">
+              <div className="font-medium text-zinc-200">Run behavior</div>
+              <p className="mt-1">Immediate runs work exactly as before. Future times queue this run and let the scheduler start it automatically.</p>
+            </div>
           </div>
 
           {!isCustom ? (
@@ -612,7 +633,17 @@ export default function PipelineRunPage() {
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
             </div>
             <p className="text-sm font-medium text-orange-300">
-              {isCustom ? "Starting upload pipeline..." : isBatchMode ? `Queueing ${batchSize} pipeline runs...` : "Starting pipeline run..."}
+              {scheduledAt
+                ? isCustom
+                  ? "Scheduling academy upload..."
+                  : isBatchMode
+                    ? `Scheduling ${batchSize} pipeline runs...`
+                    : "Scheduling pipeline run..."
+                : isCustom
+                  ? "Starting upload pipeline..."
+                  : isBatchMode
+                    ? `Queueing ${batchSize} pipeline runs...`
+                    : "Starting pipeline run..."}
             </p>
             <p className="mt-1 text-xs text-orange-200/80">You’ll be redirected to the live progress page in a moment.</p>
           </div>
@@ -626,7 +657,17 @@ export default function PipelineRunPage() {
             }
             className="w-full rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           >
-            {isCustom ? "Upload to Academy" : isBatchMode ? `Queue ${batchSize} Runs` : "Generate Content"}
+            {scheduledAt
+              ? isCustom
+                ? "Schedule Academy Upload"
+                : isBatchMode
+                  ? `Schedule ${batchSize} Runs`
+                  : "Schedule Run"
+              : isCustom
+                ? "Upload to Academy"
+                : isBatchMode
+                  ? `Queue ${batchSize} Runs`
+                  : "Generate Content"}
           </button>
         )}
       </form>

@@ -7,6 +7,7 @@ type PublishResultRow = {
   id: number;
   platform: string;
   status: string;
+  external_id: string | null;
   external_url: string | null;
   error: string | null;
   published_at: string | null;

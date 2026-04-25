@@ -5,10 +5,13 @@ import type { PipelineRunStatus, PlatformType } from "@/lib/types";
 import RunActions from "./run-actions";
 import RunProgressCard from "./run-progress-card";
 
+type PublishResultPlatform = PlatformType | "youtube_playlist" | "viva_engage" | "pipeline";
+
 type PublishResultRow = {
   id: number;
-  platform: PlatformType;
+  platform: PublishResultPlatform;
   status: "success" | "failed";
+  external_id: string | null;
   external_url: string | null;
   error: string | null;
   published_at: string | null;
@@ -38,6 +41,7 @@ type RunSnapshot = {
   completed_at: string | null;
   updated_at?: string | null;
   created_at?: string | null;
+  scheduled_at?: string | null;
   started_at?: string | null;
   post_id?: number | null;
 };
@@ -171,7 +175,7 @@ export default function RunLiveDetails({
               </div>
               <div className="space-y-2">
                 {latestPlatformResults.map((result) => {
-                  const retryDisabled = payload.run.status === "publishing" || !postPlatforms.includes(result.platform);
+                  const retryDisabled = payload.run.status === "publishing" || !isRetryablePlatform(result.platform) || !postPlatforms.includes(result.platform);
                   return (
                     <div
                       key={result.platform}
@@ -187,6 +191,7 @@ export default function RunLiveDetails({
                         <div className="mt-1 text-xs text-zinc-500">
                           {result.published_at ? formatDate(result.published_at) : "No success timestamp"}
                         </div>
+                        {result.external_id ? <div className="mt-1 text-xs text-zinc-500">ID: {result.external_id}</div> : null}
                         {result.error ? <div className="mt-1 text-xs text-red-300">{result.error}</div> : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -322,9 +327,13 @@ function RunActionsInlineRetry({
 }
 
 function getLatestPlatformResults(results: PublishResultRow[]) {
-  const latestByPlatform = new Map<PlatformType, PublishResultRow>();
+  const latestByPlatform = new Map<PublishResultPlatform, PublishResultRow>();
   for (const result of results) latestByPlatform.set(result.platform, result);
   return Array.from(latestByPlatform.values()).sort((a, b) => a.platform.localeCompare(b.platform));
+}
+
+function isRetryablePlatform(platform: PublishResultPlatform): platform is PlatformType {
+  return platform === "youtube" || platform === "instagram" || platform === "facebook";
 }
 
 function buildTimeline({
@@ -348,10 +357,10 @@ function buildTimeline({
     },
     {
       key: "started",
-      time: run.started_at ?? run.created_at ?? null,
-      title: "Generation started",
-      detail: "Assets started rendering.",
-      tone: "blue",
+      time: run.started_at ?? run.scheduled_at ?? run.created_at ?? null,
+      title: run.started_at ? "Generation started" : run.scheduled_at ? "Run scheduled" : "Generation started",
+      detail: run.started_at ? "Assets started rendering." : run.scheduled_at ? "The scheduler will start this run automatically when the scheduled time arrives." : "Assets started rendering.",
+      tone: run.started_at ? "blue" : "amber",
     },
   ];
 
@@ -383,7 +392,10 @@ function buildTimeline({
       key: `publish-${result.id}`,
       time: result.published_at,
       title: `${platformLabel(result.platform)} ${result.status === "success" ? successActionLabel(result.platform) : "failed"}`,
-      detail: result.status === "success" ? successDetail(result.platform) : result.error || `${platformLabel(result.platform)} failed without a recorded error.`,
+      detail:
+        result.status === "success"
+          ? successDetail(result.platform, result.external_id)
+          : result.error || `${platformLabel(result.platform)} failed without a recorded error.`,
       tone: result.status === "success" ? "green" : "red",
       href: result.external_url,
     });
@@ -411,7 +423,7 @@ function buildTimeline({
 
 function StatusBanner({ status }: { status: PipelineRunStatus }) {
   const config: Record<PipelineRunStatus, { bg: string; text: string; label: string }> = {
-    pending: { bg: "bg-zinc-700/50", text: "text-zinc-300", label: "Pending" },
+    pending: { bg: "bg-zinc-700/50", text: "text-zinc-200", label: "Scheduled / Queued" },
     generating: { bg: "bg-orange-500/20", text: "text-orange-200", label: "Generating..." },
     preview: { bg: "bg-amber-500/20", text: "text-amber-300", label: "Ready for Review" },
     approved: { bg: "bg-green-500/20", text: "text-green-300", label: "Approved" },
@@ -476,24 +488,47 @@ function formatDate(value: string) {
   }
 }
 
-function platformLabel(platform: PlatformType) {
-  return platform.charAt(0).toUpperCase() + platform.slice(1);
-}
-
-function successActionLabel(platform: PlatformType) {
+function platformLabel(platform: PublishResultPlatform) {
   switch (platform) {
     case "youtube":
-      return "published";
+      return "YouTube";
+    case "instagram":
+      return "Instagram";
+    case "facebook":
+      return "Facebook";
+    case "youtube_playlist":
+      return "YouTube Playlist";
+    case "viva_engage":
+      return "Viva Engage";
+    case "pipeline":
+      return "Pipeline";
     default:
-      return "published";
+      return platform.charAt(0).toUpperCase() + platform.slice(1).replace(/_/g, " ");
   }
 }
 
-function successDetail(platform: PlatformType) {
+function successActionLabel(platform: PublishResultPlatform) {
   switch (platform) {
     case "youtube":
-      return "Video upload completed successfully.";
+      return "published";
+    case "youtube_playlist":
+      return "updated";
+    case "viva_engage":
+      return "shared";
     default:
-      return "Platform accepted the content.";
+      return "completed";
+  }
+}
+
+function successDetail(platform: PublishResultPlatform, externalId: string | null) {
+  switch (platform) {
+    case "youtube":
+      return externalId ? `Video upload completed successfully (ID ${externalId}).` : "Video upload completed successfully.";
+    case "youtube_playlist":
+      return externalId ? `Playlist was updated successfully (ID ${externalId}).` : "Playlist was updated successfully.";
+    case "viva_engage":
+      return externalId ? `Video link was shared to Viva Engage (message ${externalId}).` : "Video link was shared to Viva Engage.";
+    default:
+      return "Step completed successfully.";
   }
 }

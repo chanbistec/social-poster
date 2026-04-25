@@ -526,7 +526,7 @@ function getFailurePlatformForStep(stepKey?: string) {
   }
 }
 
-export function createPipelineRun(templateId: number, input: RunInput): number {
+export function createPipelineRun(templateId: number, input: RunInput, options?: { scheduledAt?: string | null }): number {
   const template = db
     .prepare('SELECT id, type, steps FROM pipeline_templates WHERE id = ?')
     .get(templateId) as Pick<PipelineTemplate, 'id' | 'type' | 'steps'> | undefined;
@@ -537,26 +537,34 @@ export function createPipelineRun(templateId: number, input: RunInput): number {
 
   const now = new Date().toISOString();
   const stepResults = createInitialStepResults(template);
+  const scheduledAt = options?.scheduledAt?.trim() ? options.scheduledAt.trim() : null;
+  const isScheduled = Boolean(scheduledAt && new Date(scheduledAt).getTime() > Date.now());
+  const initialStatus = isScheduled ? 'pending' : 'generating';
+  const startedAt = isScheduled ? null : now;
   const result = db
     .prepare(
-      `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, started_at, created_at, updated_at)
-       VALUES (?, 'generating', ?, ?, ?, ?, ?)`,
+      `INSERT INTO pipeline_runs (template_id, status, input_params, step_results, scheduled_at, started_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(templateId, JSON.stringify(input), JSON.stringify(stepResults), now, now, now);
+    .run(templateId, initialStatus, JSON.stringify(input), JSON.stringify(stepResults), scheduledAt, startedAt, now, now);
 
   return Number(result.lastInsertRowid);
 }
 
-export function startPipelineRunInBackground(runId: number) {
+export function startPipelineRunInBackground(runId: number, onSettled?: () => void) {
   setImmediate(() => {
-    void continuePipelineRun(runId).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[Pipeline] Background run ${runId} crashed:`, error);
-      updateRunStatus(runId, 'failed', {
-        error: message,
-        completed_at: new Date().toISOString(),
+    void continuePipelineRun(runId)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[Pipeline] Background run ${runId} crashed:`, error);
+        updateRunStatus(runId, 'failed', {
+          error: message,
+          completed_at: new Date().toISOString(),
+        });
+      })
+      .finally(() => {
+        onSettled?.();
       });
-    });
   });
 }
 
@@ -572,12 +580,26 @@ export async function continuePipelineRun(runId: number): Promise<RunResult> {
   const run = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId) as {
     id: number;
     template_id: number;
+    status: string;
     input_params: string;
     step_results: string | null;
+    scheduled_at: string | null;
+    started_at: string | null;
   } | undefined;
 
   if (!run) {
     throw new Error(`Pipeline run not found: ${runId}`);
+  }
+
+  if (run.status === 'pending') {
+    const startTime = new Date().toISOString();
+    updateRunStatus(runId, 'generating', {
+      started_at: run.started_at ?? startTime,
+      completed_at: null,
+      error: null,
+    });
+    run.status = 'generating';
+    run.started_at = run.started_at ?? startTime;
   }
 
   const template = db

@@ -203,6 +203,7 @@ export interface PipelineRun {
   step_results: string | null; // JSON
   output_paths: string | null; // JSON
   error: string | null;
+  scheduled_at: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
